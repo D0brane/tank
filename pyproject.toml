@@ -1,0 +1,31 @@
+[project]
+name = "tank"
+version = "0.1.0"
+description = "Tank Trouble 2 风格 PPO 自博弈 — 仿真与训练"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "gymnasium>=0.29.0",
+    "numpy>=1.24.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+render = ["pygame>=2.5.0"]
+rl = ["stable-baselines3>=2.3.0", "torch>=2.0.0", "tensorboard>=2.14.0"]
+dev = ["pytest>=7.4.0", "ruff>=0.4.0"]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["packages/tank_sim/src", "packages/tank_rl/src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["packages/tank_sim/src", "packages/tank_rl/src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

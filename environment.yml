@@ -1,0 +1,17 @@
+# Conda 环境：专用于本项目（正式训练用这个，不要用项目 .venv）
+# 创建：conda env create -f environment.yml
+# 更新：conda env update -f environment.yml --prune
+# 激活：conda activate tank
+#
+# 训练额外步骤（CUDA PyTorch 需单独装，体积大）：
+#   pip install torch --index-url https://download.pytorch.org/whl/cu128
+#   pip install -e '.[rl]'
+name: tank
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      - -e ".[render,dev]"

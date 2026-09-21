@@ -1,0 +1,48 @@
+# P0：经典 1v1 标准弹（比例见 docs/spec_physics_calib.md）
+sim:
+  fps: 60
+  tank:
+    # 物理碰撞箱：旋转矩形 width×height（全宽×全长，长沿车头）
+    width: 20.0
+    height: 28.0
+    speed_forward: 2.24     # px/tick @60 ≈ 134 px/s ≈ 2.24 cell/s（OliverBryan 138.6×60/62）
+    angular_speed: 0.065    # ≈ 3.7°/tick（OliverBryan）
+    # 仅兼容旧配置；观测威胁改用外接圆 hypot(w,h)/2，物理不用此值
+    collision_radius: 12.0
+  bullet:
+    speed: 3.77             # px/tick @60 ≈ 226 px/s ≈ 3.77 cell/s（OliverBryan 234×60/62；≈1.69×车速）
+    radius: 2.5
+    substeps: 2
+    lifetime_frames: 600    # 10s @60（OliverBryan bulletTime=10；simple-tank 10*TPS）
+    max_active_per_tank: 5  # 经典 TT 同时最多 5 发
+  fire_cooldown_frames: 90  # ≈1.5s
+  max_episode_steps: 3000
+
+map:
+  cell_px: 60
+  wall_thickness: 4
+  default: assets/maps/empty.txt
+
+obs:
+  version: 3
+  dim: 99
+  # 10 = 5 己 + 5 敌（与 max_active_per_tank 对齐；存活期内固定占槽）
+  bullet_slots: 10
+  local_grid: 7
+
+planner:
+  refresh_every_steps: 2
+  replan_distance_threshold: 60.0
+
+reward:
+  kill: 100.0
+  death: -100.0
+  survive_per_step: 0.05
+  bullet_near_enemy: 0.2
+  bullet_threat_self: -0.1
+  fire_penalty: -0.01
+  # 冷却未结束仍按开火：意图开火但未射出且仍在 CD
+  fire_on_cd_penalty: -0.05
+  path_delta_scale: 0.01
+  aim_align_scale: 0.0
+  aim_mode: current

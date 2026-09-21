@@ -1,0 +1,33 @@
+# =============================================================================
+# SB3 PPO + MLP 基线配置（非课程；单阶段自博弈前可用）
+# 单帧 obs 由环境输出，历史堆叠由 VecFrameStack 完成
+# =============================================================================
+
+# 随机种子
+seed: 42
+# 总训练环境步数
+total_timesteps: 2_000_000
+
+env:
+  # 环境物理/观测配置路径
+  config: configs/env/sim_p0_tt2_classic.yaml
+  # 并行环境数
+  n_envs: 8
+  # MLP 历史堆叠帧数；上 LSTM 时改为 1 且不要 FrameStack
+  frame_stack: 16
+
+ppo:
+  # 学习率
+  learning_rate: 3.0e-4
+  # 每环境每次更新步数
+  n_steps: 2048
+  # 小批量大小
+  batch_size: 256
+  # 折扣因子 γ
+  gamma: 0.99
+  # 熵系数
+  ent_coef: 0.01
+
+selfplay:
+  # 是否启用自博弈（当前未接线）
+  enabled: false
