@@ -52,6 +52,7 @@ class CurriculumAimConfig:
     ppo: dict[str, Any]
     eval_n_episodes: int
     eval_every_timesteps: int
+    eval_max_episode_steps: int
     checkpoint_every_timesteps: int
     stages: list[StageConfig] = field(default_factory=list)
 
@@ -119,8 +120,9 @@ def load_curriculum_aim_config(path: str | Path) -> CurriculumAimConfig:
         min_spawn_dist=float(env.get("min_spawn_dist", 120.0)),
         max_spawn_dist=float(env.get("max_spawn_dist", 360.0)),
         ppo=dict(raw.get("ppo", {})),
-        eval_n_episodes=int(ev.get("n_episodes", 200)),
+        eval_n_episodes=int(ev.get("n_episodes", 40)),
         eval_every_timesteps=int(ev.get("every_timesteps", 50_000)),
+        eval_max_episode_steps=int(ev.get("max_episode_steps", 600)),
         checkpoint_every_timesteps=int(ck.get("every_timesteps", 100_000)),
         stages=stages,
     )

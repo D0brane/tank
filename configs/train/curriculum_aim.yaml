@@ -42,10 +42,12 @@ ppo:
   net_arch: [64, 64]
 
 eval:
-  # 每次评测的对局数
-  n_episodes: 200
+  # 每次评测的对局数（过大会严重拖慢训练；冷启动未学会时尤甚）
+  n_episodes: 40
   # 每隔多少环境步做一次评测（并尝试晋级）
   every_timesteps: 50_000
+  # 评测单局最长步数（小于训练默认 3000，避免空转磨满）
+  max_episode_steps: 600
 
 checkpoint:
   # 每隔多少环境步保存一次权重（另在训练结束再存 final_model.zip）
