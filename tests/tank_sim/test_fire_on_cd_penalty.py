@@ -20,6 +20,7 @@ def test_fire_on_cd_penalty():
         bullet_threat_self=0.0,
         fire_penalty=-0.01,
         fire_on_cd_penalty=-0.05,
+        wall_proximity_scale=0.0,
     )
     state = create_initial_state(cfg, "assets/maps/empty.txt")
     state.tanks[0].fire_cooldown = 50
@@ -46,6 +47,7 @@ def test_successful_fire_uses_fire_penalty_not_cd():
         bullet_threat_self=0.0,
         fire_penalty=-0.01,
         fire_on_cd_penalty=-0.05,
+        wall_proximity_scale=0.0,
     )
     state = create_initial_state(cfg, "assets/maps/empty.txt")
     state.tanks[0].fire_cooldown = 0

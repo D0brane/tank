@@ -38,6 +38,26 @@ class StageConfig:
 
 
 @dataclass
+class ArenaConfig:
+    """课程空场：random_open=每局随机尺寸无边框；map=用 map_path。"""
+
+    mode: Literal["map", "random_open"] = "map"
+    cols_min: int = 8
+    cols_max: int = 12
+    rows_min: int = 4
+    rows_max: int = 6
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "mode": self.mode,
+            "cols_min": self.cols_min,
+            "cols_max": self.cols_max,
+            "rows_min": self.rows_min,
+            "rows_max": self.rows_max,
+        }
+
+
+@dataclass
 class CurriculumAimConfig:
     seed: int
     total_timesteps: int
@@ -55,6 +75,7 @@ class CurriculumAimConfig:
     eval_max_episode_steps: int
     checkpoint_every_timesteps: int
     stages: list[StageConfig] = field(default_factory=list)
+    arena: ArenaConfig = field(default_factory=ArenaConfig)
 
 
 def load_curriculum_aim_config(path: str | Path) -> CurriculumAimConfig:
@@ -125,4 +146,32 @@ def load_curriculum_aim_config(path: str | Path) -> CurriculumAimConfig:
         eval_max_episode_steps=int(ev.get("max_episode_steps", 600)),
         checkpoint_every_timesteps=int(ck.get("every_timesteps", 100_000)),
         stages=stages,
+        arena=_load_arena(raw.get("arena")),
+    )
+
+
+def _load_arena(raw: Any) -> ArenaConfig:
+    if not isinstance(raw, dict):
+        return ArenaConfig()
+    mode = str(raw.get("mode", "map"))
+    if mode not in ("map", "random_open"):
+        mode = "map"
+    cols = raw.get("cols", [8, 12])
+    rows = raw.get("rows", [4, 6])
+    if isinstance(cols, (list, tuple)) and len(cols) >= 2:
+        cols_min, cols_max = int(cols[0]), int(cols[1])
+    else:
+        cols_min = int(raw.get("cols_min", 8))
+        cols_max = int(raw.get("cols_max", 12))
+    if isinstance(rows, (list, tuple)) and len(rows) >= 2:
+        rows_min, rows_max = int(rows[0]), int(rows[1])
+    else:
+        rows_min = int(raw.get("rows_min", 4))
+        rows_max = int(raw.get("rows_max", 6))
+    return ArenaConfig(
+        mode=mode,  # type: ignore[arg-type]
+        cols_min=cols_min,
+        cols_max=cols_max,
+        rows_min=rows_min,
+        rows_max=rows_max,
     )

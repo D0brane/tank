@@ -9,7 +9,8 @@ from tank_sim.core.types import ControlIntent, MoveIntent, RotateIntent
 # 死区边界：与项目定版一致
 DEAD_LOW = -0.2
 DEAD_HIGH = 0.2
-FIRE_THRESHOLD = 0.5
+# 动作第三维 ∈ [-1,1]：严格大于 0 开火（=0 与负数均不开）
+FIRE_THRESHOLD = 0.0
 
 
 def continuous_to_intent(action: np.ndarray | list[float]) -> ControlIntent:
@@ -41,5 +42,5 @@ def continuous_to_intent(action: np.ndarray | list[float]) -> ControlIntent:
     return ControlIntent(
         move=move,
         rotate=rotate,
-        fire=fire >= FIRE_THRESHOLD,
+        fire=fire > FIRE_THRESHOLD,
     )

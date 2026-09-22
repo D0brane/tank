@@ -20,7 +20,7 @@ def _resolve_stage(cfg, stage: str):
         if s.name == stage:
             return i, s
     names = ", ".join(s.name for s in stages)
-    raise SystemExit(f"未知阶段 {stage!r}，可选: {names} 或 0..{len(stages)-1}")
+    raise SystemExit(f"未知阶段 {stage!r}，可选: auto / {names} 或 0..{len(stages)-1}")
 
 
 def _configure_bot_for_watch(bot, stage_bot, *, use_anneal_end: bool) -> None:
@@ -39,14 +39,131 @@ def _configure_bot_for_watch(bot, stage_bot, *, use_anneal_end: bool) -> None:
     )
 
 
+def _configure_bot_from_meta(bot, meta) -> None:
+    """用存盘时记录的退火后对手参数。"""
+    bot.configure(
+        mode=meta.bot_mode,  # type: ignore[arg-type]
+        speed_scale=meta.speed_scale,
+        mean_straight_frames=meta.mean_straight_frames,
+        turn_duration=meta.turn_duration,
+    )
+
+
+def _checkpoint_timesteps(path: Path) -> int:
+    """从 ``model_t114688_....zip`` 解析环境步数；解析失败返回 -1。"""
+    import re
+
+    m = re.search(r"_t(\d+)_", path.name)
+    return int(m.group(1)) if m else -1
+
+
+def _zip_obs_flat_and_steps(path: Path) -> tuple[int | None, int]:
+    """轻量读取 zip：观测扁平维数 + 训练步数（失败则 (None, -1)）。"""
+    try:
+        from stable_baselines3.common.save_util import load_from_zip_file
+    except ImportError:
+        return None, -1
+    try:
+        data, _params, _pytorch = load_from_zip_file(str(path), device="cpu")
+    except Exception:
+        return None, -1
+    if not isinstance(data, dict):
+        return None, -1
+    space = data.get("observation_space")
+    flat: int | None = None
+    if space is not None and hasattr(space, "shape"):
+        import numpy as np
+
+        flat = int(np.prod(space.shape))
+    steps = int(data.get("num_timesteps") or data.get("_total_timesteps") or -1)
+    named = _checkpoint_timesteps(path)
+    if named >= 0:
+        steps = max(steps, named)
+    return flat, steps
+
+
+def _is_run_dir(path: Path) -> bool:
+    """训练 run 目录：``YYYYMMDD_HHMMSS``（忽略 PPO_* / checkpoints 等杂项目录）。"""
+    import re
+
+    return bool(re.fullmatch(r"\d{8}_\d{6}", path.name))
+
+
+def _auto_select_model(
+    root: Path,
+    *,
+    expect_flat: int,
+) -> Path | None:
+    """
+    自动选权重：优先**最新时间戳 run**，在该 run 内取维数匹配且步数最高的 zip。
+
+    若最新 run 尚无兼容权重（例如旧 99 维），再往更早的 run 回退。
+    """
+    if not root.is_dir():
+        return None
+    runs = sorted(
+        (p for p in root.iterdir() if p.is_dir() and _is_run_dir(p)),
+        key=lambda p: p.name,
+        reverse=True,
+    )
+    for run in runs:
+        candidates: list[Path] = []
+        final = run / "final_model.zip"
+        if final.is_file():
+            candidates.append(final)
+        ckpt_dir = run / "checkpoints"
+        if ckpt_dir.is_dir():
+            candidates.extend(ckpt_dir.glob("model_t*.zip"))
+        scored: list[tuple[int, Path]] = []
+        for path in candidates:
+            flat, steps = _zip_obs_flat_and_steps(path)
+            if flat is None or flat != expect_flat:
+                continue
+            scored.append((steps, path))
+        if scored:
+            scored.sort(key=lambda x: x[0], reverse=True)
+            return scored[0][1]
+    return None
+
+
+# 兼容旧测试名
+def _latest_model(root: Path = Path("runs/curriculum_aim")) -> Path | None:
+    """无维数约束时：最新时间戳 run 内最大步数 checkpoint。"""
+    if not root.is_dir():
+        return None
+    runs = sorted(
+        (p for p in root.iterdir() if p.is_dir() and _is_run_dir(p)),
+        key=lambda p: p.name,
+        reverse=True,
+    )
+    for run in runs:
+        candidates: list[Path] = []
+        final = run / "final_model.zip"
+        if final.is_file():
+            candidates.append(final)
+        ckpt_dir = run / "checkpoints"
+        if ckpt_dir.is_dir():
+            candidates.extend(ckpt_dir.glob("model_t*.zip"))
+        if candidates:
+            return max(
+                candidates,
+                key=lambda p: (
+                    _checkpoint_timesteps(p)
+                    if _checkpoint_timesteps(p) >= 0
+                    else _zip_obs_flat_and_steps(p)[1]
+                ),
+            )
+    return None
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         description="加载训练权重，对战瞄准课程靶，实时展示（结束自动重开）"
     )
     parser.add_argument(
         "--model",
-        default="runs/curriculum_aim/final_model.zip",
-        help="SB3 PPO checkpoint（.zip）",
+        default=None,
+        help="SB3 PPO checkpoint（.zip）；默认自动选与当前观测维匹配、步数最高的权重",
     )
     parser.add_argument(
         "--curriculum",
@@ -55,13 +172,13 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument(
         "--stage",
-        default="0",
-        help="课程阶段名或下标，如 stage1_static / 0 / 1 / 2",
+        default="auto",
+        help="auto=读 checkpoint 旁 .curriculum.json；或阶段名/下标 0/1/2",
     )
     parser.add_argument(
         "--easy",
         action="store_true",
-        help="用阶段退火起点难度（默认用终点：更快/更勤转弯）",
+        help="手动选阶段时用退火起点（默认终点）；auto+meta 时忽略",
     )
     parser.add_argument("--fps", type=int, default=60)
     parser.add_argument("--device", default="auto")
@@ -89,22 +206,77 @@ def main(argv: list[str] | None = None) -> None:
         print("请安装: pip install -e '.[render]'")
         sys.exit(1)
 
+    from tank_rl.checkpoint_meta import (
+        load_curriculum_meta,
+        parse_stage_index_from_filename,
+    )
     from tank_rl.curriculum.config import load_curriculum_aim_config
     from tank_rl.inference.policy_bundle import PolicyBundle
     from tank_sim.bots.curriculum_bot import CurriculumBot
+    from tank_sim.config import load_env_config
     from tank_sim.envs.duel_env import DuelEnv
 
     cur = load_curriculum_aim_config(args.curriculum)
-    stage_idx, stage = _resolve_stage(cur, args.stage)
-    bot = CurriculumBot(mode=stage.bot.mode, seed=cur.seed)
-    _configure_bot_for_watch(bot, stage.bot, use_anneal_end=not args.easy)
 
-    model_path = Path(args.model)
-    policy = PolicyBundle(
-        model_path,
-        frame_stack=cur.frame_stack,
-        device=args.device,
-    )
+    if args.model:
+        model_path = Path(args.model)
+    else:
+        env_cfg = load_env_config(cur.env_config)
+        expect_flat = int(env_cfg.obs.dim) * int(cur.frame_stack)
+        found = _auto_select_model(
+            Path("runs/curriculum_aim"), expect_flat=expect_flat
+        )
+        if found is None:
+            raise SystemExit(
+                "未找到与当前观测维匹配的模型：请传 --model，或先训练生成 "
+                f"obs={env_cfg.obs.dim}×stack={cur.frame_stack}（输入 {expect_flat}）的 "
+                "runs/curriculum_aim/<时间戳>/checkpoints/*.zip"
+            )
+        model_path = found
+        steps = _checkpoint_timesteps(model_path)
+        print(
+            f"[加载] 自动选择 {model_path}"
+            + (f"  (t={steps:,})" if steps >= 0 else "")
+            + f"  匹配输入维 {expect_flat}"
+        )
+
+    meta = load_curriculum_meta(model_path)
+    bot_from_meta = False
+
+    if args.stage == "auto":
+        if meta is not None:
+            stage_idx = meta.stage_index
+            if stage_idx < 0 or stage_idx >= len(cur.stages):
+                raise SystemExit(
+                    f"meta.stage_index={stage_idx} 越界（共 {len(cur.stages)} 阶段）"
+                )
+            stage = cur.stages[stage_idx]
+            bot = CurriculumBot(mode=meta.bot_mode, seed=cur.seed)  # type: ignore[arg-type]
+            _configure_bot_from_meta(bot, meta)
+            bot_from_meta = True
+            print(
+                f"[加载] 课程元数据 → {meta.stage_name}  "
+                f"mode={meta.bot_mode} v={meta.speed_scale:.2f} "
+                f"直行={meta.mean_straight_frames:.0f}"
+            )
+        else:
+            parsed = parse_stage_index_from_filename(model_path)
+            stage_idx = parsed if parsed is not None else 0
+            if stage_idx >= len(cur.stages):
+                stage_idx = 0
+            stage = cur.stages[stage_idx]
+            bot = CurriculumBot(mode=stage.bot.mode, seed=cur.seed)
+            _configure_bot_for_watch(bot, stage.bot, use_anneal_end=not args.easy)
+            print(
+                f"[加载] 无 .curriculum.json，按文件名/默认阶段 "
+                f"→ {stage.name}（退火{'终点' if not args.easy else '起点'}）"
+            )
+    else:
+        stage_idx, stage = _resolve_stage(cur, args.stage)
+        bot = CurriculumBot(mode=stage.bot.mode, seed=cur.seed)
+        _configure_bot_for_watch(bot, stage.bot, use_anneal_end=not args.easy)
+
+    frame_stack = meta.frame_stack if meta is not None else cur.frame_stack
 
     env = DuelEnv(
         config_path=cur.env_config,
@@ -118,7 +290,19 @@ def main(argv: list[str] | None = None) -> None:
         min_spawn_dist=cur.min_spawn_dist,
         max_spawn_dist=cur.max_spawn_dist,
         reward_overrides=stage.reward,
+        open_arena=cur.arena.as_dict() if cur.arena.mode == "random_open" else None,
     )
+
+    try:
+        policy = PolicyBundle(
+            model_path,
+            frame_stack=frame_stack,
+            device=args.device,
+            expect_obs_dim=env.cfg.obs.dim,
+        )
+    except ValueError as e:
+        env.close()
+        raise SystemExit(f"无法观战：{e}") from e
 
     pygame.init()
     obs, _ = env.reset(seed=cur.seed)
@@ -127,16 +311,29 @@ def main(argv: list[str] | None = None) -> None:
     episode = 1
     auto_restart = not args.no_auto_restart
 
+    ckpt_steps = _checkpoint_timesteps(model_path)
     print("=" * 56)
     print("检查结果 / 实时观战")
     print(f"  模型     : {model_path}")
+    if ckpt_steps >= 0:
+        print(f"  权重步数 : t={ckpt_steps:,}")
+        if ckpt_steps < 200_000:
+            print(
+                "  警告     : 权重很早（<200k），行为会飘；"
+                "等更新的 checkpoint 或传 --model 指定"
+            )
     print(f"  课程阶段 : {stage.name} (#{stage_idx})")
     print(
         f"  对手     : mode={bot.mode} speed={bot.speed_scale:.2f} "
         f"直行间隔={bot.mean_straight_frames:.0f}"
+        + ("  [存盘快照]" if bot_from_meta else "")
     )
-    print(f"  帧堆叠   : {cur.frame_stack}  确定性={args.deterministic}")
-    print("  Esc 退出 | R 重开 | 1/2/3 切换阶段0/1/2")
+    print(
+        f"  环境     : obs={env.cfg.obs.dim}  "
+        f"hits_to_die={env.cfg.sim.tank.hits_to_die}  "
+        f"堆叠={frame_stack}  确定性={args.deterministic}"
+    )
+    print("  Esc 退出 | R 重开 | 1/2/3 切换阶段0/1/2（手动难度）")
     print(f"  自动重开 : {'开' if auto_restart else '关'}")
     print("=" * 56)
 
@@ -165,6 +362,7 @@ def main(argv: list[str] | None = None) -> None:
                     if new_idx < len(cur.stages):
                         stage_idx = new_idx
                         stage = cur.stages[stage_idx]
+                        bot_from_meta = False
                         _configure_bot_for_watch(
                             bot, stage.bot, use_anneal_end=not args.easy
                         )

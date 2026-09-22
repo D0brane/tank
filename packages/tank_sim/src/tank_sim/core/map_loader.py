@@ -120,7 +120,7 @@ def load_map(
     if spawn_red is None or spawn_blue is None:
         raise ValueError(f"地图必须包含 R 与 B 出生点: {p}")
 
-    h_walls, v_walls = edges_from_blocked(blocked)
+    h_walls, v_walls = edges_from_blocked(blocked, seal_border=True)
     gm = make_game_map(
         cols=cols,
         rows=rows,
@@ -164,8 +164,15 @@ def _assert_spawns_connected(game_map: GameMap, path: str = "") -> None:
 
 def edges_from_blocked(
     blocked: list[list[bool]],
+    *,
+    seal_border: bool = True,
 ) -> tuple[list[list[bool]], list[list[bool]]]:
-    """由不可走格推导边墙：空地贴墙/越界处立薄墙，并强制外框。"""
+    """
+    由不可走格推导边墙：空地贴墙/越界处立薄墙。
+
+    ``seal_border=True``（默认）强制外框，与 ASCII ``load_map`` / 迷宫一致。
+    ``seal_border=False`` 时不封外框；若 ``blocked`` 全 False，则无任何墙。
+    """
     rows = len(blocked)
     cols = len(blocked[0])
     h_walls = [[False for _ in range(cols)] for _ in range(rows + 1)]
@@ -173,7 +180,8 @@ def edges_from_blocked(
 
     def is_block(x: int, y: int) -> bool:
         if x < 0 or y < 0 or x >= cols or y >= rows:
-            return True
+            # 无外框时，越界不视为墙；有外框时越界当墙以生成边界边
+            return bool(seal_border)
         return blocked[y][x]
 
     for y in range(rows):
@@ -189,15 +197,48 @@ def edges_from_blocked(
             if is_block(x, y + 1):
                 h_walls[y + 1][x] = True
 
-    # 外框（即使角上是 # 也封死世界边界）
-    for c in range(cols):
-        h_walls[0][c] = True
-        h_walls[rows][c] = True
-    for r in range(rows):
-        v_walls[r][0] = True
-        v_walls[r][cols] = True
+    if seal_border:
+        # 外框（即使角上是 # 也封死世界边界）
+        for c in range(cols):
+            h_walls[0][c] = True
+            h_walls[rows][c] = True
+        for r in range(rows):
+            v_walls[r][0] = True
+            v_walls[r][cols] = True
 
     return h_walls, v_walls
+
+
+def generate_open_arena(
+    cols: int,
+    rows: int,
+    cell_px: float,
+    wall_thickness: float = 4.0,
+) -> GameMap:
+    """
+    无内墙、无外框的开放空场（瞄准课程）。
+
+    出生点占位为中心左右；局内通常用 random_spawn 覆盖。
+    坦克出界靠软钳制（见 ``clamp_tank_to_map``），不靠墙碰撞。
+    """
+    if cols < 2 or rows < 1:
+        raise ValueError(f"open arena 尺寸无效: cols={cols} rows={rows}")
+    blocked = [[False for _ in range(cols)] for _ in range(rows)]
+    h_walls, v_walls = edges_from_blocked(blocked, seal_border=False)
+    mid_y = (rows - 1) * 0.5
+    spawn_red = cell_center(1, int(mid_y), cell_px)
+    spawn_blue = cell_center(cols - 2, int(mid_y), cell_px)
+    return make_game_map(
+        cols=cols,
+        rows=rows,
+        cell_px=cell_px,
+        wall_thickness=wall_thickness,
+        h_walls=h_walls,
+        v_walls=v_walls,
+        spawn_red=spawn_red,
+        spawn_blue=spawn_blue,
+        blocked=blocked,
+    )
 
 
 def cell_center(tx: int, ty: int, cell_px: float) -> tuple[float, float]:

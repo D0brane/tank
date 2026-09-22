@@ -6,7 +6,7 @@ import copy
 
 from tank_sim.config import EnvConfig, SimConfig
 from tank_sim.core.bullet import step_bullets
-from tank_sim.core.collision import tank_overlaps_wall, tanks_overlap
+from tank_sim.core.collision import clamp_tank_to_map, tank_overlaps_wall, tanks_overlap
 from tank_sim.core.map_loader import load_map
 from tank_sim.core.tank import (
     apply_rotation_checked,
@@ -40,12 +40,14 @@ def create_initial_state(
             y=game_map.spawn_red[1],
             theta=0.0,
             owner="red",
+            hp=cfg.sim.tank.hits_to_die,
         )
         blue = TankState(
             x=game_map.spawn_blue[0],
             y=game_map.spawn_blue[1],
             theta=3.141592653589793,
             owner="blue",
+            hp=cfg.sim.tank.hits_to_die,
         )
     else:
         red = TankState(
@@ -53,12 +55,14 @@ def create_initial_state(
             y=spawn.red_y,
             theta=spawn.red_theta,
             owner="red",
+            hp=cfg.sim.tank.hits_to_die,
         )
         blue = TankState(
             x=spawn.blue_x,
             y=spawn.blue_y,
             theta=spawn.blue_theta,
             owner="blue",
+            hp=cfg.sim.tank.hits_to_die,
         )
     return WorldState(
         step=0,
@@ -79,11 +83,17 @@ def step_world(
 
     顺序：冷却 → 旋转 → 平移（含车-墙/车-车）→ 开火 → 子弹 → 步数+1
     """
-    s = copy.deepcopy(state)
+    # 浅拷贝：共享不可变 game_map，避免每步 deepcopy 墙表（量大时极慢）
+    s = copy.copy(state)
+    s.tanks = (copy.copy(state.tanks[0]), copy.copy(state.tanks[1]))
+    s.bullets = [copy.copy(b) for b in state.bullets]
     s.red_killed_by = "none"
     s.blue_killed_by = "none"
     s.red_fired = False
     s.blue_fired = False
+    s.kill_bullet_bounces = 0
+    s.kill_bullet_owner = "none"
+    s.hit_events = []
 
     if s.terminated:
         return s
@@ -108,6 +118,10 @@ def step_world(
         if tank_overlaps_wall(blue, sim.tank, s.game_map):
             blue.x = (red.x + blue.x) * 0.5
             blue.y = (red.y + blue.y) * 0.5
+
+    # 无墙空场：软钳制防开出世界边界
+    clamp_tank_to_map(red, sim.tank, s.game_map)
+    clamp_tank_to_map(blue, sim.tank, s.game_map)
 
     n_red = sum(1 for b in s.bullets if b.owner == "red")
     n_blue = sum(1 for b in s.bullets if b.owner == "blue")

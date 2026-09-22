@@ -100,6 +100,23 @@ def clamp_bullet_to_map(
     return nx, ny, (nx != x or ny != y)
 
 
+def clamp_tank_to_map(tank: TankState, tank_cfg: TankConfig, game_map: GameMap) -> bool:
+    """
+    将车心软钳制在地图内（无墙空场防开出世界）；不反弹。
+
+    返回是否发生了钳制。
+    """
+    w, h = map_bounds(game_map)
+    # 半对角 + 薄墙半厚，近似车体不越界
+    half = 0.5 * math.hypot(tank_cfg.width, tank_cfg.height)
+    margin = game_map.wall_thickness * 0.5 + half
+    nx = max(margin, min(tank.x, w - margin))
+    ny = max(margin, min(tank.y, h - margin))
+    moved = nx != tank.x or ny != tank.y
+    tank.x, tank.y = nx, ny
+    return moved
+
+
 def bullet_in_wall(x: float, y: float, radius: float, game_map: GameMap) -> bool:
     """弹心（考虑半径）是否与边墙相交。"""
     for w in _nearby_walls(game_map, x, y, radius + game_map.wall_thickness):
@@ -176,11 +193,12 @@ def resolve_bullet_wall_step(
     radius: float,
     game_map: GameMap,
     dt: float = 1.0,
-) -> tuple[float, float, float, float]:
+) -> tuple[float, float, float, float, bool]:
     """
     子弹单子步：线段扫掠 + 墙边法线反射。
 
     对角点：若最早时刻附近同时撞到水平边与竖直边，则 vx、vy 同时翻转。
+    返回 (x, y, vx, vy, bounced)；bounced 表示本子步发生了墙反射。
     """
     if bullet_in_wall(x0, y0, radius, game_map):
         x0, y0, vx, vy = eject_bullet_from_wall(x0, y0, vx, vy, radius, game_map)
@@ -202,9 +220,11 @@ def resolve_bullet_wall_step(
                 continue
             candidates.append((t, ix, iy, nx, ny))
 
+    bounced = False
     if not candidates:
         x, y = x1, y1
     else:
+        bounced = True
         candidates.sort(key=lambda c: c[0])
         t0 = candidates[0][0]
         corner_eps = 1e-3
@@ -230,4 +250,4 @@ def resolve_bullet_wall_step(
         y = iy + ny * eps
 
     x, y, vx, vy = eject_bullet_from_wall(x, y, vx, vy, radius, game_map)
-    return x, y, vx, vy
+    return x, y, vx, vy, bounced

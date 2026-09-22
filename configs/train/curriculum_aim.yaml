@@ -1,22 +1,29 @@
 # =============================================================================
 # 瞄准课程训练配置
-# 流程：空场固定靶 → 直线移动靶 → 直行+偶发转弯
-# 晋级看评测 kill_rate / hit_rate（不用平均回报）
+# 流程：无边框随机空场固定靶 → 直线移动靶 → 直行+偶发转弯
+# 观测：50 维（无墙雷达）× frame_stack=16 → 网络输入 800
+# 晋级看评测 hit_rate（直击：本局至少一发未反弹命中敌方）；kill_rate 为总命中率（含反弹）
 # =============================================================================
 
 # 随机种子（环境重置 / PPO 共用）
 seed: 42
-# 总训练环境步数（所有并行环境合计）
-total_timesteps: 3_000_000
-# 仿真与观测 YAML（物理、obs 维数、默认奖励基线）
-env_config: configs/env/sim_p0_tt2_classic.yaml
-# 课程用地图（空场，无迷宫墙）
+# 总训练环境步数（设很大便于一直训；手动 Ctrl+C 结束）
+total_timesteps: 100_000_000
+# 仿真与观测 YAML（50 维无雷达；物理与 classic 一致）
+env_config: configs/env/sim_p0_tt2_aim_open.yaml
+# 回退地图（arena.mode=map 时用；random_open 时每局程序化生成）
 map_path: assets/maps/empty.txt
+
+# 每局随机尺寸无边框空场（坦克靠软钳制不出界）
+arena:
+  mode: random_open
+  cols: [8, 12]
+  rows: [4, 6]
 
 env:
   # 并行环境数量（DummyVecEnv）
   n_envs: 8
-  # 观测历史堆叠帧数（MLP 输入维 = obs.dim × frame_stack）
+  # 观测历史堆叠帧数（MLP 输入维 = 50 × 16 = 800）
   frame_stack: 16
   # 训练方：red=红方，blue=蓝方
   agent_side: red
@@ -39,13 +46,13 @@ ppo:
   # 熵正则系数（探索）
   ent_coef: 0.01
   # MLP 隐层宽度 [层1, 层2]
-  net_arch: [64, 64]
+  net_arch: [256, 128]
 
 eval:
   # 每次评测的对局数（过大会严重拖慢训练；冷启动未学会时尤甚）
-  n_episodes: 40
+  n_episodes: 70
   # 每隔多少环境步做一次评测（并尝试晋级）
-  every_timesteps: 50_000
+  every_timesteps: 80_000
   # 评测单局最长步数（小于训练默认 3000，避免空转磨满）
   max_episode_steps: 600
 
@@ -64,28 +71,46 @@ stages:
       speed_scale: 0.0
     reward:
       # 每步存活奖（课程关闭，避免磨时间）
-      survive_per_step: 0.0
+      survive_per_step: -0.001
       # A* 路径缩短奖（空场关闭）
       path_delta_scale: 0.0
       # 近身弹威胁惩罚（靶子不开火，置 0）
-      bullet_threat_self: 0.0
-      # 瞄准对齐塑形权重（cos 朝向误差）
+      bullet_threat_self: -0.15
+      # 瞄准对齐塑形权重：scale × max(0,cos(Δθ))^power
       aim_align_scale: 0.15
+      # 幂次：越大越尖（奖励集中在接近 0°）
+      aim_align_power: 4.0
       # 瞄准目标：current=敌人现位 / lead=超前拦截点
       aim_mode: current
-      # 己弹靠近敌人的稠密奖
-      bullet_near_enemy: 0.25
+      # 己弹靠近敌人的稠密奖（略降，避免与贴脸惩罚对冲）
+      bullet_near_enemy: 0.10
       # 开火惩罚（抑止空枪；成功射出时）
-      fire_penalty: -0.01
+      fire_penalty: -5
       # 冷却未过仍按开火（意图开火未射出且仍在 CD）
-      fire_on_cd_penalty: -0.05
-      # 击杀稀疏奖
+      fire_on_cd_penalty: -0.02
+      # 每步前进/后退惩罚
+      move_penalty: -0.001
+      # 每步转向惩罚（瞄准阶段先 0，避免压过 aim）
+      rotate_penalty: 0.008
+      # 前进↔后退切换惩罚（抑止原地抽搐）
+      move_switch_penalty: -0.02
+      # 贴边/贴墙高次惩罚（空场无墙时按世界边界距离）
+      wall_proximity_scale: -0.25
+      wall_proximity_margin: 50.0
+      wall_proximity_power: 4.0
+      # 贴敌高次惩罚：仅很近才大罚
+      enemy_proximity_scale: -0.25
+      enemy_proximity_margin: 100.0
+      enemy_proximity_power: 4.0
+      # 击杀稀疏奖（直击）
       kill: 100.0
+      # 己弹反弹后再击杀
+      kill_bounce: 0.0
       # 被击杀惩罚
-      death: -100.0
+      death: -80.0
     promote:
-      # 晋级指标：kill_rate=击杀率 / hit_rate=命中率
-      metric: kill_rate
+      # 晋级指标：hit_rate=直击（未反弹命中敌方）；kill_rate=总命中（另见 TB）
+      metric: hit_rate
       # 达标阈值（评测窗口均值）
       threshold: 0.70
       # 击杀局中位耗时上限（帧）；超时视为磨死，不晋级
@@ -102,21 +127,33 @@ stages:
       # 速度从 start→end 的线性退火环境步数
       anneal_timesteps: 400_000
     reward:
-      survive_per_step: 0.0
+      # 与阶段1同套罚项：抑止空枪/反弹刷分；本阶段改超前瞄准
+      survive_per_step: -0.001
       path_delta_scale: 0.0
-      bullet_threat_self: 0.0
-      aim_align_scale: 0.12
-      # 本阶段用超前瞄准
+      bullet_threat_self: -0.15
+      # 塑形略降，仍够引导 lead
+      aim_align_scale: 0.15
+      aim_align_power: 4.0
       aim_mode: lead
-      bullet_near_enemy: 0.2
-      fire_penalty: -0.01
-      fire_on_cd_penalty: -0.05
+      bullet_near_enemy: 0.10
+      fire_penalty: -5
+      fire_on_cd_penalty: -0.02
+      move_penalty: -0.001
+      rotate_penalty: 0.001
+      move_switch_penalty: -0.02
+      wall_proximity_scale: -0.30
+      wall_proximity_margin: 50.0
+      wall_proximity_power: 4.0
+      enemy_proximity_scale: -0.30
+      enemy_proximity_margin: 100.0
+      enemy_proximity_power: 4.0
       kill: 100.0
-      death: -100.0
+      kill_bounce: 0.0
+      death: -80.0
     promote:
+      # 直击率（门槛低于阶段1，便于进入满速后过渡）
       metric: hit_rate
-      threshold: 0.50
-      # 仅当当前 speed_scale 已退火到该值才允许晋级
+      threshold: 0.30
       require_speed_scale: 1.0
 
   # ---------- 阶段3：偶发转弯，抗机动；瞄准塑形衰减 ----------
@@ -133,19 +170,30 @@ stages:
       # 直行间隔从 start→end 的退火步数
       anneal_timesteps: 600_000
     reward:
-      survive_per_step: 0.0
+      # 罚项同阶段1；aim 再降，逼靠直击 kill 信号
+      survive_per_step: -0.001
       path_delta_scale: 0.0
-      bullet_threat_self: 0.0
-      # 瞄准塑形明显减小，逼靠击杀信号
+      bullet_threat_self: -0.15
       aim_align_scale: 0.04
+      aim_align_power: 4.0
       aim_mode: lead
-      bullet_near_enemy: 0.15
-      fire_penalty: -0.01
-      fire_on_cd_penalty: -0.05
+      bullet_near_enemy: 0.10
+      fire_penalty: -5
+      fire_on_cd_penalty: -0.02
+      move_penalty: -0.001
+      rotate_penalty: 0.001
+      move_switch_penalty: -0.02
+      wall_proximity_scale: -0.35
+      wall_proximity_margin: 50.0
+      wall_proximity_power: 4.0
+      enemy_proximity_scale: -0.35
+      enemy_proximity_margin: 100.0
+      enemy_proximity_power: 4.0
       kill: 100.0
-      death: -100.0
+      kill_bounce: 0.0
+      death: -80.0
     promote:
-      metric: kill_rate
+      # 直击率；转弯间隔退火到位后才允许晋级
+      metric: hit_rate
       threshold: 0.55
-      # 仅当 mean_straight_frames 已退火到 ≤ 该值才允许晋级
       require_mean_straight_frames: 60.0

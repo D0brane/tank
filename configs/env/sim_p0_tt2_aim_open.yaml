@@ -1,0 +1,58 @@
+# 瞄准课程：无墙雷达（50 维）+ 无边框空场；物理与 classic 一致
+sim:
+  fps: 60
+  tank:
+    width: 20.0
+    height: 28.0
+    speed_forward: 2.24
+    angular_speed: 0.065
+    collision_radius: 12.0
+    hits_to_die: 5
+  bullet:
+    speed: 3.77
+    radius: 2.5
+    substeps: 2
+    lifetime_frames: 600
+    max_active_per_tank: 5
+  fire_cooldown_frames: 90
+  max_episode_steps: 3000
+
+map:
+  cell_px: 60
+  wall_thickness: 4
+  default: assets/maps/empty.txt
+
+obs:
+  version: 3
+  # 1 + 6 + 4×10 + 0 + 3 = 50（无墙雷达）
+  dim: 50
+  bullet_slots: 10
+  wall_radar_rays: 0
+
+planner:
+  refresh_every_steps: 2
+  replan_distance_threshold: 60.0
+
+reward:
+  kill: 100.0
+  kill_bounce: 40.0
+  death: -100.0
+  survive_per_step: 0.05
+  bullet_near_enemy: 0.2
+  bullet_threat_self: -0.1
+  fire_penalty: -0.01
+  fire_on_cd_penalty: -0.05
+  move_penalty: -0.002
+  rotate_penalty: 0.0
+  move_switch_penalty: -0.02
+  # 空场无墙；贴敌由课程 stage 覆盖
+  wall_proximity_scale: 0.0
+  wall_proximity_margin: 40.0
+  wall_proximity_power: 4.0
+  enemy_proximity_scale: 0.0
+  enemy_proximity_margin: 100.0
+  enemy_proximity_power: 4.0
+  path_delta_scale: 0.0
+  aim_align_scale: 0.0
+  aim_align_power: 8.0
+  aim_mode: current

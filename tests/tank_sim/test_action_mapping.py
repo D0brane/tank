@@ -18,3 +18,10 @@ def test_forward_fire():
     assert intent.move == MoveIntent.FORWARD
     assert intent.rotate == RotateIntent.RIGHT
     assert intent.fire is True
+
+
+def test_fire_threshold_positive_only():
+    assert continuous_to_intent(np.array([0.0, 0.0, 0.01])).fire is True
+    assert continuous_to_intent(np.array([0.0, 0.0, 0.0])).fire is False
+    assert continuous_to_intent(np.array([0.0, 0.0, -0.1])).fire is False
+    assert continuous_to_intent(np.array([0.0, 0.0, 0.4])).fire is True

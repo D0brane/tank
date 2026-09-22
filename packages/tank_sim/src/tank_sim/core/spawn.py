@@ -9,6 +9,7 @@ import numpy as np
 
 from tank_sim.config import TankConfig
 from tank_sim.core.collision import tank_overlaps_wall, tanks_overlap
+from tank_sim.core.map_loader import is_blocked, world_to_tile
 from tank_sim.core.types import GameMap, TankState
 
 
@@ -24,6 +25,34 @@ class DualSpawn:
     blue_theta: float
 
 
+def _free_cells(game_map: GameMap) -> list[tuple[int, int]]:
+    """不可走格（#）以外的格子。"""
+    cells: list[tuple[int, int]] = []
+    for ty in range(game_map.rows):
+        for tx in range(game_map.cols):
+            if not is_blocked(game_map, tx, ty):
+                cells.append((tx, ty))
+    return cells
+
+
+def _sample_in_cell(
+    game_map: GameMap,
+    tx: int,
+    ty: int,
+    rng: np.random.Generator,
+    *,
+    inset: float,
+) -> tuple[float, float]:
+    """在格子内采样一点，远离格边 inset，避免贴薄墙。"""
+    cell = game_map.cell_px
+    half = max(1.0, 0.5 * cell - inset)
+    cx = (tx + 0.5) * cell
+    cy = (ty + 0.5) * cell
+    x = float(rng.uniform(cx - half, cx + half))
+    y = float(rng.uniform(cy - half, cy + half))
+    return x, y
+
+
 def sample_dual_spawn(
     game_map: GameMap,
     tank_cfg: TankConfig,
@@ -34,24 +63,31 @@ def sample_dual_spawn(
     max_tries: int = 400,
 ) -> DualSpawn:
     """
-    均匀采样两车位置与朝向，满足间距 ∈ [min_dist, max_dist]，且不嵌墙、互不重叠。
+    仅在可走格内采样两车位置与朝向，满足间距 ∈ [min_dist, max_dist]，
+    且不嵌墙、互不重叠、不落在 # 格上。
     """
     if min_dist > max_dist:
         raise ValueError(f"min_dist ({min_dist}) > max_dist ({max_dist})")
 
-    margin = 0.5 * math.hypot(tank_cfg.width, tank_cfg.height) + game_map.wall_thickness + 4.0
-    width = game_map.cols * game_map.cell_px
-    height = game_map.rows * game_map.cell_px
-    lo_x, hi_x = margin, width - margin
-    lo_y, hi_y = margin, height - margin
-    if hi_x <= lo_x or hi_y <= lo_y:
-        raise ValueError("地图过小，无法随机出生")
+    free = _free_cells(game_map)
+    if len(free) < 2:
+        raise ValueError("地图可走格不足，无法随机出生")
+
+    inset = 0.5 * game_map.wall_thickness + 2.0
 
     for _ in range(max_tries):
-        rx = float(rng.uniform(lo_x, hi_x))
-        ry = float(rng.uniform(lo_y, hi_y))
-        bx = float(rng.uniform(lo_x, hi_x))
-        by = float(rng.uniform(lo_y, hi_y))
+        (rtx, rty), (btx, bty) = free[int(rng.integers(0, len(free)))], free[
+            int(rng.integers(0, len(free)))
+        ]
+        rx, ry = _sample_in_cell(game_map, rtx, rty, rng, inset=inset)
+        bx, by = _sample_in_cell(game_map, btx, bty, rng, inset=inset)
+        # 采样后再次确认 tile 仍可走（数值边界）
+        r_tile = world_to_tile(rx, ry, game_map.cell_px)
+        b_tile = world_to_tile(bx, by, game_map.cell_px)
+        if is_blocked(game_map, r_tile[0], r_tile[1]):
+            continue
+        if is_blocked(game_map, b_tile[0], b_tile[1]):
+            continue
         dist = math.hypot(rx - bx, ry - by)
         if dist < min_dist or dist > max_dist:
             continue
@@ -67,7 +103,11 @@ def sample_dual_spawn(
             continue
         return DualSpawn(rx, ry, rth, bx, by, bth)
 
-    # 回退：地图默认出生点 + 随机朝向
+    # 回退：地图默认出生点（须可走）+ 随机朝向
+    for side, pos in (("red", game_map.spawn_red), ("blue", game_map.spawn_blue)):
+        tx, ty = world_to_tile(pos[0], pos[1], game_map.cell_px)
+        if is_blocked(game_map, tx, ty):
+            raise ValueError(f"默认出生点落在不可走格上: {side} {pos}")
     return DualSpawn(
         game_map.spawn_red[0],
         game_map.spawn_red[1],

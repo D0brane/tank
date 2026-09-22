@@ -52,7 +52,7 @@ def test_horizontal_bullet_reflects_on_right_wall():
     x, y = 30.0, 30.0
     vx, vy = 6.0, 0.0
     for _ in range(40):
-        x, y, vx, vy = resolve_bullet_wall_step(x, y, vx, vy, radius=2.0, game_map=gm, dt=1.0)
+        x, y, vx, vy, _b = resolve_bullet_wall_step(x, y, vx, vy, radius=2.0, game_map=gm, dt=1.0)
         if vx < 0:
             break
     assert vx < 0
@@ -64,7 +64,7 @@ def test_vertical_bullet_reflects_on_bottom_wall():
     x, y = 30.0, 30.0
     vx, vy = 0.0, 6.0
     for _ in range(40):
-        x, y, vx, vy = resolve_bullet_wall_step(x, y, vx, vy, radius=2.0, game_map=gm, dt=1.0)
+        x, y, vx, vy, _b = resolve_bullet_wall_step(x, y, vx, vy, radius=2.0, game_map=gm, dt=1.0)
         if vy < 0:
             break
     assert vy < 0
@@ -77,7 +77,7 @@ def test_empty_map_file_bullet_survives():
     x, y = gm.spawn_red[0] + 40.0, gm.spawn_red[1]
     vx, vy = 3.77, 0.0
     for _ in range(30):
-        x, y, vx, vy = resolve_bullet_wall_step(x, y, vx, vy, radius=2.5, game_map=gm, dt=0.5)
+        x, y, vx, vy, _b = resolve_bullet_wall_step(x, y, vx, vy, radius=2.5, game_map=gm, dt=0.5)
     assert math.isfinite(x) and math.isfinite(y)
 
 
@@ -92,7 +92,7 @@ def test_bullet_stays_inside_map_bounds():
         x, y = gm.spawn_red[0], gm.spawn_red[1]
         vx, vy = 8.0 * math.cos(ang), 8.0 * math.sin(ang)
         for _ in range(200):
-            x, y, vx, vy = resolve_bullet_wall_step(
+            x, y, vx, vy, _b = resolve_bullet_wall_step(
                 x, y, vx, vy, radius=radius, game_map=gm, dt=0.5
             )
             assert margin - 1e-2 <= x <= w - margin + 1e-2
@@ -109,7 +109,7 @@ def test_diagonal_into_inner_corner_bounces_both_axes():
     saw_flip = False
     for _ in range(80):
         ovx, ovy = vx, vy
-        x, y, vx, vy = resolve_bullet_wall_step(x, y, vx, vy, radius=2.0, game_map=gm, dt=1.0)
+        x, y, vx, vy, _b = resolve_bullet_wall_step(x, y, vx, vy, radius=2.0, game_map=gm, dt=1.0)
         if vx > 0 and vy > 0 and (ovx < 0 or ovy < 0):
             saw_flip = True
             break

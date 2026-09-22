@@ -11,14 +11,14 @@ from tank_sim.config import EnvConfig, default_config_path, load_env_config
 from tank_sim.control.action_mapping import continuous_to_intent
 from tank_sim.core.world import create_initial_state, step_world
 from tank_sim.observation.builder import ObservationBuilder
-from tank_sim.reward.shaping import RewardState, compute_reward_for_side
+from tank_sim.reward.shaping import RewardState, compute_reward_breakdown
 
 
 class BattleEnv(gym.Env):
     """
     红蓝双方均由外部传入动作的双人环境。
 
-    观测：各 obs.dim 维（v3 为 99）；动作：Box(-1,1,(3,))。
+    观测：各 obs.dim 维（v3 为 58）；动作：Box(-1,1,(3,))。
     """
 
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 60}
@@ -120,26 +120,29 @@ class BattleEnv(gym.Env):
         )
         self._obs_builder.on_step_end(self._state)
 
-        rewards = {
-            "red": compute_reward_for_side(
-                prev,
-                self._state,
-                "red",
-                self.cfg.reward,
-                self._reward_state,
-                bullet_speed=self.cfg.sim.bullet.speed,
-                fire_intent=bool(intent_red.fire),
-            ),
-            "blue": compute_reward_for_side(
-                prev,
-                self._state,
-                "blue",
-                self.cfg.reward,
-                self._reward_state,
-                bullet_speed=self.cfg.sim.bullet.speed,
-                fire_intent=bool(intent_blue.fire),
-            ),
-        }
+        red_bd = compute_reward_breakdown(
+            prev,
+            self._state,
+            "red",
+            self.cfg.reward,
+            self._reward_state,
+            bullet_speed=self.cfg.sim.bullet.speed,
+            fire_intent=bool(intent_red.fire),
+            move_intent=intent_red.move,
+            rotate_intent=intent_red.rotate,
+        )
+        blue_bd = compute_reward_breakdown(
+            prev,
+            self._state,
+            "blue",
+            self.cfg.reward,
+            self._reward_state,
+            bullet_speed=self.cfg.sim.bullet.speed,
+            fire_intent=bool(intent_blue.fire),
+            move_intent=intent_blue.move,
+            rotate_intent=intent_blue.rotate,
+        )
+        rewards = {"red": red_bd.total, "blue": blue_bd.total}
         terminated = self._state.terminated
         truncated = self._state.step >= self.cfg.sim.max_episode_steps
         info = {
@@ -147,6 +150,8 @@ class BattleEnv(gym.Env):
             "step": self._state.step,
             "red_killed_by": self._state.red_killed_by,
             "blue_killed_by": self._state.blue_killed_by,
+            "reward_parts_red": red_bd.as_parts_dict(),
+            "reward_parts_blue": blue_bd.as_parts_dict(),
         }
         return self._pair_obs(), rewards, terminated, truncated, info
 

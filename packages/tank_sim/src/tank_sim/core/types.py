@@ -40,6 +40,8 @@ class TankState:
     y: float
     theta: float
     alive: bool = True
+    # 剩余命中次数；开局由 hits_to_die 写入
+    hp: int = 5
     fire_cooldown: int = 0
     # 冷却归零后已过去的帧数；开局取很大值，观测上视为已就绪满一个 CD 周期
     fire_ready_age: int = 10**9
@@ -59,6 +61,8 @@ class BulletState:
     age: int = 0
     # 全局递增 id，供观测槽位在存活期内保持稳定
     id: int = 0
+    # 撞墙反射次数（用于区分直击 / 反弹击杀奖励）
+    bounces: int = 0
 
 
 @dataclass(frozen=True)
@@ -126,6 +130,15 @@ Winner = Literal["none", "red", "blue"]
 
 
 @dataclass
+class HitEvent:
+    """本步一次子弹命中（含非致命），供 kill/death 逐步计分。"""
+
+    attacker: Literal["red", "blue"]
+    victim: Literal["red", "blue"]
+    bounces: int = 0
+
+
+@dataclass
 class WorldState:
     """完整仿真状态（确定性步进）。"""
 
@@ -141,6 +154,11 @@ class WorldState:
     blue_killed_by: Literal["none", "self", "enemy"] = "none"
     red_fired: bool = False
     blue_fired: bool = False
+    # 本步致死弹信息（供评测区分直击 / 反弹）
+    kill_bullet_bounces: int = 0
+    kill_bullet_owner: Literal["none", "red", "blue"] = "none"
+    # 本步所有命中（每击一条；kill/death 按此计分）
+    hit_events: list[HitEvent] = field(default_factory=list)
 
     @property
     def terminated(self) -> bool:

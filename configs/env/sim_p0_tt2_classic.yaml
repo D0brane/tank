@@ -9,6 +9,8 @@ sim:
     angular_speed: 0.065    # ≈ 3.7°/tick（OliverBryan）
     # 仅兼容旧配置；观测威胁改用外接圆 hypot(w,h)/2，物理不用此值
     collision_radius: 12.0
+    # 被击中多少次后死亡（改回一发死设为 1）
+    hits_to_die: 5
   bullet:
     speed: 3.77             # px/tick @60 ≈ 226 px/s ≈ 3.77 cell/s（OliverBryan 234×60/62；≈1.69×车速）
     radius: 2.5
@@ -25,10 +27,11 @@ map:
 
 obs:
   version: 3
-  dim: 99
+  dim: 58
   # 10 = 5 己 + 5 敌（与 max_active_per_tank 对齐；存活期内固定占槽）
   bullet_slots: 10
-  local_grid: 7
+  # 车体 8 向墙雷达（距离 / 房间较长边一半）
+  wall_radar_rays: 8
 
 planner:
   refresh_every_steps: 2
@@ -36,6 +39,8 @@ planner:
 
 reward:
   kill: 100.0
+  # 己方子弹至少反弹一次后再击杀
+  kill_bounce: 40.0
   death: -100.0
   survive_per_step: 0.05
   bullet_near_enemy: 0.2
@@ -43,6 +48,22 @@ reward:
   fire_penalty: -0.01
   # 冷却未结束仍按开火：意图开火但未射出且仍在 CD
   fire_on_cd_penalty: -0.05
+  # 每步前进/后退惩罚；抑止无意义乱晃
+  move_penalty: -0.002
+  # 每步左/右转向惩罚（瞄准阶段先关掉，避免压过 aim 塑形）
+  rotate_penalty: 0.0
+  # 前进↔后退瞬时切换惩罚（抑止原地抽搐）
+  move_switch_penalty: -0.02
+  # 贴墙：scale × (1 - d/margin)^power；d=车心到最近墙(px)
+  wall_proximity_scale: -0.03
+  wall_proximity_margin: 40.0
+  wall_proximity_power: 1.0
+  # 贴敌：默认关闭（瞄准课程在 stage reward 覆盖）
+  enemy_proximity_scale: 0.0
+  enemy_proximity_margin: 100.0
+  enemy_proximity_power: 4.0
   path_delta_scale: 0.01
   aim_align_scale: 0.0
+  # max(0,cos)^power；越大对准附近越尖（默认 8）
+  aim_align_power: 8.0
   aim_mode: current

@@ -15,7 +15,7 @@ from tank_sim.control.action_mapping import continuous_to_intent
 from tank_sim.core.spawn import sample_dual_spawn
 from tank_sim.core.world import create_initial_state, step_world
 from tank_sim.observation.builder import ObservationBuilder
-from tank_sim.reward.shaping import RewardState, compute_reward_for_side
+from tank_sim.reward.shaping import RewardState, compute_reward_breakdown
 
 
 OpponentFn = Callable[[np.ndarray], np.ndarray]
@@ -51,6 +51,7 @@ class DuelEnv(gym.Env):
         min_spawn_dist: float = 120.0,
         max_spawn_dist: float = 360.0,
         reward_overrides: dict[str, Any] | None = None,
+        open_arena: dict[str, Any] | None = None,
     ) -> None:
         super().__init__()
         cfg_path = config_path or str(default_config_path())
@@ -62,6 +63,7 @@ class DuelEnv(gym.Env):
             )
         self._map_path = map_path
         self._game_map = game_map
+        self._open_arena = dict(open_arena) if open_arena else None
         self.agent_side = agent_side
         self._opponent = opponent
         self._curriculum_bot = curriculum_bot
@@ -104,6 +106,8 @@ class DuelEnv(gym.Env):
         self._hud_lines: list[str] = []
         self._episode_fired = False
         self._episode_near_hit = False
+        self._episode_hit_enemy = False
+        self._episode_direct_hit_enemy = False
 
     @property
     def state(self):
@@ -149,6 +153,27 @@ class DuelEnv(gym.Env):
                 openness=float(opts.get("maze_openness", 0.12)),
             )
             self._map_path = None
+        elif self._open_arena and self._open_arena.get("mode") == "random_open":
+            from tank_sim.core.map_loader import generate_open_arena
+
+            assert self._np_random is not None
+            cols_lo = int(self._open_arena.get("cols_min", 8))
+            cols_hi = int(self._open_arena.get("cols_max", 12))
+            rows_lo = int(self._open_arena.get("rows_min", 4))
+            rows_hi = int(self._open_arena.get("rows_max", 6))
+            if cols_lo > cols_hi:
+                cols_lo, cols_hi = cols_hi, cols_lo
+            if rows_lo > rows_hi:
+                rows_lo, rows_hi = rows_hi, rows_lo
+            cols = int(self._np_random.integers(cols_lo, cols_hi + 1))
+            rows = int(self._np_random.integers(rows_lo, rows_hi + 1))
+            self._game_map = generate_open_arena(
+                cols=cols,
+                rows=rows,
+                cell_px=self.cfg.map.cell_px,
+                wall_thickness=self.cfg.map.wall_thickness,
+            )
+            self._map_path = None
 
         random_spawn = bool(opts.get("random_spawn", self.random_spawn))
         min_dist = float(opts.get("min_spawn_dist", self.min_spawn_dist))
@@ -177,6 +202,8 @@ class DuelEnv(gym.Env):
         self._reward_state = RewardState()
         self._episode_fired = False
         self._episode_near_hit = False
+        self._episode_hit_enemy = False
+        self._episode_direct_hit_enemy = False
         if self._curriculum_bot is not None:
             self._curriculum_bot.reset(seed=None if seed is None else int(seed) + 17)
         return self._agent_obs(), {"step": 0}
@@ -203,11 +230,17 @@ class DuelEnv(gym.Env):
             self._episode_fired = True
         if self.agent_side == "blue" and self._state.blue_fired:
             self._episode_fired = True
+        for ev in self._state.hit_events:
+            if ev.attacker != self.agent_side or ev.victim == self.agent_side:
+                continue
+            self._episode_hit_enemy = True
+            if ev.bounces == 0:
+                self._episode_direct_hit_enemy = True
         self._episode_near_hit = self._episode_near_hit or _own_bullet_near_enemy(
             self._state, self.agent_side
         )
 
-        reward = compute_reward_for_side(
+        breakdown = compute_reward_breakdown(
             prev,
             self._state,
             self.agent_side,
@@ -215,7 +248,10 @@ class DuelEnv(gym.Env):
             self._reward_state,
             bullet_speed=self.cfg.sim.bullet.speed,
             fire_intent=bool(agent_intent.fire),
+            move_intent=agent_intent.move,
+            rotate_intent=agent_intent.rotate,
         )
+        reward = breakdown.total
         terminated = self._state.terminated
         truncated = self._state.step >= self.cfg.sim.max_episode_steps
         agent_won = self._state.winner == self.agent_side
@@ -223,9 +259,16 @@ class DuelEnv(gym.Env):
             "winner": self._state.winner,
             "step": self._state.step,
             "agent_won": agent_won,
-            "hit_enemy": agent_won or self._episode_near_hit,
+            # 晋级 hit_rate：本局至少一发己弹未反弹命中敌方（不必致死）
+            "direct_hit": self._episode_direct_hit_enemy,
+            # 评测 kill_rate（总命中）：本局己弹至少打中敌方一次（含反弹）
+            "hit_enemy": self._episode_hit_enemy,
+            "near_hit": self._episode_near_hit,
+            "kill_bullet_bounces": self._state.kill_bullet_bounces,
+            "kill_bullet_owner": self._state.kill_bullet_owner,
             "fired": self._episode_fired,
             "ttk": self._state.step if agent_won else None,
+            "reward_parts": breakdown.as_parts_dict(),
         }
         return self._agent_obs(), reward, terminated, truncated, info
 
@@ -293,7 +336,18 @@ def _merge_reward(base: RewardConfig, overrides: dict[str, Any]) -> RewardConfig
         "path_delta_scale": base.path_delta_scale,
         "aim_align_scale": base.aim_align_scale,
         "aim_mode": base.aim_mode,
+        "aim_align_power": base.aim_align_power,
         "fire_on_cd_penalty": base.fire_on_cd_penalty,
+        "move_penalty": base.move_penalty,
+        "rotate_penalty": base.rotate_penalty,
+        "move_switch_penalty": base.move_switch_penalty,
+        "kill_bounce": base.kill_bounce,
+        "wall_proximity_scale": base.wall_proximity_scale,
+        "wall_proximity_margin": base.wall_proximity_margin,
+        "wall_proximity_power": base.wall_proximity_power,
+        "enemy_proximity_scale": base.enemy_proximity_scale,
+        "enemy_proximity_margin": base.enemy_proximity_margin,
+        "enemy_proximity_power": base.enemy_proximity_power,
     }
     data.update({k: overrides[k] for k in data if k in overrides})
     return RewardConfig(**data)

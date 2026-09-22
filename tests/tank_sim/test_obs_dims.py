@@ -11,22 +11,38 @@ from tank_sim.observation.bullet_features import BulletSlotAssigner
 from tank_sim.observation.spec import expected_obs_dim
 
 
-def test_observation_is_99_v3():
+def test_observation_is_58_v3():
     cfg = load_env_config(default_config_path())
     assert cfg.obs.version == 3
     assert cfg.obs.bullet_slots == 10
-    assert cfg.obs.dim == 99
-    assert expected_obs_dim(10, 7) == 99
+    assert cfg.obs.wall_radar_rays == 8
+    assert cfg.obs.dim == 58
+    assert expected_obs_dim(10, 8) == 58
 
     state = create_initial_state(cfg, "assets/maps/maze_small.txt")
     builder = ObservationBuilder(cfg)
     red = builder.build(state, "red")
     blue = builder.build(state, "blue")
-    assert red.shape == (99,)
-    assert blue.shape == (99,)
+    assert red.shape == (58,)
+    assert blue.shape == (58,)
     assert red.dtype == np.float32
     # 开局已就绪满周期 → +1
     assert red[0] == pytest.approx(1.0)
+
+
+def test_observation_is_50_aim_open_no_radar():
+    cfg = load_env_config("configs/env/sim_p0_tt2_aim_open.yaml")
+    assert cfg.obs.wall_radar_rays == 0
+    assert cfg.obs.dim == 50
+    assert expected_obs_dim(10, 0) == 50
+    from tank_sim.core.map_loader import generate_open_arena
+
+    gm = generate_open_arena(10, 5, cfg.map.cell_px, cfg.map.wall_thickness)
+    state = create_initial_state(cfg, game_map=gm)
+    builder = ObservationBuilder(cfg)
+    red = builder.build(state, "red")
+    assert red.shape == (50,)
+    assert red.dtype == np.float32
 
 
 def test_self_fire_phase_in_obs():
@@ -85,7 +101,7 @@ obs:
   version: 3
   dim: 78
   bullet_slots: 10
-  local_grid: 7
+  wall_radar_rays: 8
 planner:
   refresh_every_steps: 1
   replan_distance_threshold: 1

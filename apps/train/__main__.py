@@ -18,12 +18,20 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--log-dir",
         default="runs/curriculum_aim",
-        help="checkpoint 与 TensorBoard 日志目录",
+        help="实验根目录；新训时在其下新建 YYYYMMDD_HHMMSS/；续训忽略此项（写回原 run）",
     )
     parser.add_argument(
         "--device",
         default="auto",
         help="计算设备：auto / cpu / cuda / cuda:0",
+    )
+    parser.add_argument(
+        "--resume",
+        default=None,
+        help=(
+            "断点续训：checkpoint .zip，或某次 run 目录"
+            "（优先 latest.zip，否则 checkpoints 中步数最大的权重）"
+        ),
     )
     args = parser.parse_args(argv)
 
@@ -33,6 +41,7 @@ def main(argv: list[str] | None = None) -> None:
         config_path=Path(args.config),
         log_dir=Path(args.log_dir),
         device=args.device,
+        resume=Path(args.resume) if args.resume else None,
     )
 
 

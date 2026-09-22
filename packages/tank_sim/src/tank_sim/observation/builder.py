@@ -1,4 +1,4 @@
-"""组装单帧上帝观测（维数由 ObsConfig.dim 决定，当前 v3 为 99）。"""
+"""组装单帧上帝观测（维数由 ObsConfig.dim 决定；v3 有雷达 58 / 无雷达 50）。"""
 
 from __future__ import annotations
 
@@ -10,8 +10,8 @@ from tank_sim.config import EnvConfig
 from tank_sim.core.types import TankState, WorldState
 from tank_sim.observation.bullet_features import BulletSlotAssigner, build_bullet_features
 from tank_sim.observation.enemy_features import build_enemy_features
-from tank_sim.observation.local_grid import build_local_grid
 from tank_sim.observation.self_features import build_self_features
+from tank_sim.observation.wall_radar import build_wall_radar
 from tank_sim.planning.planner_features import PlannerCache, compute_planner_features
 
 
@@ -76,9 +76,9 @@ class ObservationBuilder:
         )
         slot_list = assigner.assign(obs_t.owner, state.bullets)
         parts.extend(build_bullet_features(obs_t, slot_list))
-        parts.extend(
-            build_local_grid(obs_t, state.game_map, size=self._obs_cfg.local_grid)
-        )
+        n_rays = int(self._obs_cfg.wall_radar_rays)
+        if n_rays > 0:
+            parts.extend(build_wall_radar(obs_t, state.game_map, n_rays=n_rays))
         parts.extend(
             list(
                 compute_planner_features(

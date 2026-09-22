@@ -18,6 +18,8 @@ class TankConfig:
     speed_forward: float
     angular_speed: float
     collision_radius: float
+    # 被击中多少次后死亡；1 = 一发死
+    hits_to_die: int = 5
 
 
 @dataclass(frozen=True)
@@ -57,7 +59,7 @@ class ObsConfig:
     version: int
     dim: int
     bullet_slots: int
-    local_grid: int
+    wall_radar_rays: int
 
 
 @dataclass(frozen=True)
@@ -78,8 +80,27 @@ class RewardConfig:
     # 瞄准塑形：0 关闭；current=对准现位，lead=超前拦截点
     aim_align_scale: float = 0.0
     aim_mode: str = "current"
+    # max(0,cos)^power；越大越尖（奖励更集中在对准附近）
+    aim_align_power: float = 8.0
     # 冷却未结束仍按开火时的惩罚（意图开火且未射出且仍在 CD）
-    fire_on_cd_penalty: float = 0.0
+    fire_on_cd_penalty: float = 0.0    # 每步平移惩罚（前进/后退意图）
+    move_penalty: float = 0.0
+    # 每步转向惩罚（左/右旋转意图）
+    rotate_penalty: float = 0.0
+    # 前进↔后退瞬时切换惩罚（抑止原地抽搐）
+    move_switch_penalty: float = 0.0
+    # 己方子弹反弹后再击杀的奖励（低于直击 kill）
+    kill_bounce: float = 40.0
+    # 贴墙惩罚：scale × max(0, 1 - d/margin)^power；scale=0 关闭
+    wall_proximity_scale: float = 0.0
+    # 车心到最近墙的像素阈值；小于此距离开始惩罚
+    wall_proximity_margin: float = 40.0
+    # 贴墙惩罚幂次（越大越贴墙才痛）
+    wall_proximity_power: float = 1.0
+    # 贴敌惩罚：scale × max(0, 1 - d/margin)^power；scale=0 关闭
+    enemy_proximity_scale: float = 0.0
+    enemy_proximity_margin: float = 100.0
+    enemy_proximity_power: float = 4.0
 
 
 @dataclass(frozen=True)
@@ -101,22 +122,22 @@ def _get(d: dict[str, Any], *keys: str, default: Any = None) -> Any:
 
 
 def _load_obs_config(raw_obs: dict[str, Any]) -> ObsConfig:
-    """解析 obs 段并校验 dim 与 bullet_slots / local_grid 一致。"""
+    """解析 obs 段并校验 dim 与 bullet_slots / wall_radar_rays 一致。"""
     version = int(raw_obs["version"])
     dim = int(raw_obs["dim"])
     bullet_slots = int(raw_obs["bullet_slots"])
-    local_grid = int(raw_obs["local_grid"])
-    expected = expected_obs_dim(bullet_slots, local_grid)
+    wall_radar_rays = int(raw_obs["wall_radar_rays"])
+    expected = expected_obs_dim(bullet_slots, wall_radar_rays)
     if dim != expected:
         raise ValueError(
             f"obs.dim={dim} 与规格不符，期望 {expected} "
-            f"(bullet_slots={bullet_slots}, local_grid={local_grid})"
+            f"(bullet_slots={bullet_slots}, wall_radar_rays={wall_radar_rays})"
         )
     return ObsConfig(
         version=version,
         dim=dim,
         bullet_slots=bullet_slots,
-        local_grid=local_grid,
+        wall_radar_rays=wall_radar_rays,
     )
 
 
@@ -139,6 +160,7 @@ def load_env_config(path: str | Path) -> EnvConfig:
                 speed_forward=float(tank_raw["speed_forward"]),
                 angular_speed=float(tank_raw["angular_speed"]),
                 collision_radius=float(tank_raw["collision_radius"]),
+                hits_to_die=int(tank_raw.get("hits_to_die", 5)),
             ),
             bullet=BulletConfig(
                 speed=float(bullet_raw["speed"]),
@@ -174,7 +196,30 @@ def load_env_config(path: str | Path) -> EnvConfig:
             path_delta_scale=float(raw["reward"]["path_delta_scale"]),
             aim_align_scale=float(raw["reward"].get("aim_align_scale", 0.0)),
             aim_mode=str(raw["reward"].get("aim_mode", "current")),
+            aim_align_power=float(raw["reward"].get("aim_align_power", 8.0)),
             fire_on_cd_penalty=float(raw["reward"].get("fire_on_cd_penalty", 0.0)),
+            move_penalty=float(raw["reward"].get("move_penalty", 0.0)),
+            rotate_penalty=float(raw["reward"].get("rotate_penalty", 0.0)),
+            move_switch_penalty=float(raw["reward"].get("move_switch_penalty", 0.0)),
+            kill_bounce=float(raw["reward"].get("kill_bounce", 40.0)),
+            wall_proximity_scale=float(
+                raw["reward"].get("wall_proximity_scale", 0.0)
+            ),
+            wall_proximity_margin=float(
+                raw["reward"].get("wall_proximity_margin", 40.0)
+            ),
+            wall_proximity_power=float(
+                raw["reward"].get("wall_proximity_power", 1.0)
+            ),
+            enemy_proximity_scale=float(
+                raw["reward"].get("enemy_proximity_scale", 0.0)
+            ),
+            enemy_proximity_margin=float(
+                raw["reward"].get("enemy_proximity_margin", 100.0)
+            ),
+            enemy_proximity_power=float(
+                raw["reward"].get("enemy_proximity_power", 4.0)
+            ),
         ),
     )
 

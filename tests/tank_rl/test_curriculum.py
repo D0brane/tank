@@ -21,7 +21,7 @@ def test_curriculum_bot_static_zero_action():
     state = create_initial_state(cfg, "assets/maps/empty.txt")
     bot = CurriculumBot(mode="static")
     bot.reset(seed=0)
-    act = bot.act(np.zeros(99, dtype=np.float32), state, "blue")
+    act = bot.act(np.zeros(58, dtype=np.float32), state, "blue")
     assert np.allclose(act, 0.0)
 
 
@@ -32,7 +32,7 @@ def test_curriculum_bot_linear_moves():
     bot.reset(seed=1)
     # 对齐航向多步
     for _ in range(40):
-        act = bot.act(np.zeros(99, dtype=np.float32), state, "blue")
+        act = bot.act(np.zeros(58, dtype=np.float32), state, "blue")
         intent = continuous_to_intent(act)
         idle = continuous_to_intent(np.zeros(3))
         state = step_world(state, idle, intent, cfg.sim)
@@ -61,11 +61,40 @@ def test_sample_dual_spawn_distance():
         assert min_d <= d <= max_d
 
 
+def test_sample_dual_spawn_not_in_blocked_cells():
+    from tank_sim.core.map_loader import is_blocked, world_to_tile
+
+    cfg = load_env_config(default_config_path())
+    state = create_initial_state(cfg, "assets/maps/empty.txt")
+    gm = state.game_map
+    rng = np.random.default_rng(1)
+    for _ in range(80):
+        spawn = sample_dual_spawn(
+            gm,
+            cfg.sim.tank,
+            rng,
+            min_dist=80.0,
+            max_dist=320.0,
+        )
+        for x, y in (
+            (spawn.red_x, spawn.red_y),
+            (spawn.blue_x, spawn.blue_y),
+        ):
+            tx, ty = world_to_tile(x, y, gm.cell_px)
+            assert not is_blocked(gm, tx, ty), f"spawn in blocked cell ({tx},{ty})"
+
+
 def test_aim_align_current_higher_when_facing():
     cfg = load_env_config(default_config_path())
     from dataclasses import replace
 
-    reward = replace(cfg.reward, aim_align_scale=1.0, aim_mode="current", survive_per_step=0.0)
+    reward = replace(
+        cfg.reward,
+        aim_align_scale=1.0,
+        aim_mode="current",
+        survive_per_step=0.0,
+        wall_proximity_scale=0.0,
+    )
     state = create_initial_state(cfg, "assets/maps/empty.txt")
     red, blue = state.tanks
     # 红在左，蓝在右；红朝右对准
@@ -78,6 +107,33 @@ def test_aim_align_current_higher_when_facing():
     state.tanks = (red, blue)
     r_away = compute_reward_for_side(prev, state, "red", reward, RewardState())
     assert r_face > r_away
+    assert abs(r_face - 1.0) < 1e-6
+    assert abs(r_away) < 1e-6
+
+
+def test_aim_align_quadratic_sharper_near_perfect():
+    """60° 偏角：cos=0.5 → power=8 时仅 1/256，远低于二次型。"""
+    cfg = load_env_config(default_config_path())
+    from dataclasses import replace
+
+    reward = replace(
+        cfg.reward,
+        aim_align_scale=1.0,
+        aim_align_power=8.0,
+        aim_mode="current",
+        survive_per_step=0.0,
+        path_delta_scale=0.0,
+        bullet_near_enemy=0.0,
+        bullet_threat_self=0.0,
+        wall_proximity_scale=0.0,
+    )
+    state = create_initial_state(cfg, "assets/maps/empty.txt")
+    red, blue = state.tanks
+    red.x, red.y, red.theta = 100.0, 100.0, math.radians(60.0)
+    blue.x, blue.y, blue.theta = 200.0, 100.0, 0.0
+    state.tanks = (red, blue)
+    r = compute_reward_for_side(state, state, "red", reward, RewardState())
+    assert abs(r - (0.5**8)) < 1e-6
 
 
 def test_duel_env_random_spawn_and_curriculum():
@@ -104,7 +160,7 @@ def test_duel_env_random_spawn_and_curriculum():
     )
     assert 100.0 <= d <= 320.0
     obs2, reward, term, trunc, info2 = env.step(np.zeros(3, dtype=np.float32))
-    assert "agent_won" in info2 and "hit_enemy" in info2
+    assert "agent_won" in info2 and "hit_enemy" in info2 and "direct_hit" in info2
     env.close()
 
 

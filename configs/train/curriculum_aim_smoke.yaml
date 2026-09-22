@@ -1,8 +1,13 @@
 # 冒烟 / 容量探测用（短跑，少评测）
 seed: 0
 total_timesteps: 20000
-env_config: configs/env/sim_p0_tt2_classic.yaml
+env_config: configs/env/sim_p0_tt2_aim_open.yaml
 map_path: assets/maps/empty.txt
+
+arena:
+  mode: random_open
+  cols: [8, 10]
+  rows: [4, 5]
 
 env:
   n_envs: 8
@@ -34,12 +39,23 @@ stages:
       path_delta_scale: 0.0
       bullet_threat_self: 0.0
       aim_align_scale: 0.15
+      aim_align_power: 8.0
       aim_mode: current
       bullet_near_enemy: 0.25
       fire_penalty: -0.01
       fire_on_cd_penalty: -0.05
+      move_penalty: -0.002
+      rotate_penalty: 0.0
+      move_switch_penalty: -0.02
+      wall_proximity_scale: 0.0
+      wall_proximity_margin: 40.0
+      wall_proximity_power: 4.0
+      enemy_proximity_scale: -0.2
+      enemy_proximity_margin: 100.0
+      enemy_proximity_power: 4.0
       kill: 100.0
+      kill_bounce: 40.0
       death: -100.0
     promote:
-      metric: kill_rate
+      metric: hit_rate
       threshold: 0.99
