@@ -39,6 +39,29 @@ def _configure_bot_for_watch(bot, stage_bot, *, use_anneal_end: bool) -> None:
     )
 
 
+def _sync_watch_scheduler(scheduler, stage_idx: int, bot) -> None:
+    """观战对手与训练评测一致：写入 CurriculumScheduler 再建环境。"""
+    scheduler.stage_index = stage_idx
+    scheduler.bot.configure(
+        mode=bot.mode,
+        speed_scale=bot.speed_scale,
+        mean_straight_frames=bot.mean_straight_frames,
+        turn_duration=bot.turn_duration,
+    )
+
+
+def _episode_bullet_summary(info: dict) -> str:
+    bf = int(info.get("bullets_fired", 0))
+    ho = int(info.get("hits_on_enemy", 0))
+    dh = int(info.get("direct_hits_on_enemy", 0))
+    if bf <= 0:
+        return "kill=0.000 hit=0.000 (0弹)"
+    return (
+        f"kill={ho / bf:.3f} hit={dh / bf:.3f} "
+        f"(命中{ho}/开火{bf} 直击{dh})"
+    )
+
+
 def _configure_bot_from_meta(bot, meta) -> None:
     """用存盘时记录的退火后对手参数。"""
     bot.configure(
@@ -206,15 +229,18 @@ def main(argv: list[str] | None = None) -> None:
         print("请安装: pip install -e '.[render]'")
         sys.exit(1)
 
+    from stable_baselines3 import PPO
+
     from tank_rl.checkpoint_meta import (
         load_curriculum_meta,
         parse_stage_index_from_filename,
     )
     from tank_rl.curriculum.config import load_curriculum_aim_config
-    from tank_rl.inference.policy_bundle import PolicyBundle
+    from tank_rl.curriculum.scheduler import CurriculumScheduler
+    from tank_rl.eval.duel_eval_env import make_eval_predict_fn, make_strided_duel_eval_env
+    from tank_rl.vec_env.strided_stack import stacked_obs_dim
     from tank_sim.bots.curriculum_bot import CurriculumBot
     from tank_sim.config import load_env_config
-    from tank_sim.envs.duel_env import DuelEnv
 
     cur = load_curriculum_aim_config(args.curriculum)
 
@@ -222,7 +248,11 @@ def main(argv: list[str] | None = None) -> None:
         model_path = Path(args.model)
     else:
         env_cfg = load_env_config(cur.env_config)
-        expect_flat = int(env_cfg.obs.dim) * int(cur.frame_stack)
+        expect_flat = stacked_obs_dim(
+            int(env_cfg.obs.dim),
+            int(cur.frame_stack),
+            action_dim=3 if cur.stack_action_mean else 0,
+        )
         found = _auto_select_model(
             Path("runs/curriculum_aim"), expect_flat=expect_flat
         )
@@ -277,36 +307,50 @@ def main(argv: list[str] | None = None) -> None:
         _configure_bot_for_watch(bot, stage.bot, use_anneal_end=not args.easy)
 
     frame_stack = meta.frame_stack if meta is not None else cur.frame_stack
-
-    env = DuelEnv(
-        config_path=cur.env_config,
-        map_path=cur.map_path,
-        agent_side=cur.agent_side,  # type: ignore[arg-type]
-        opponent="curriculum",
-        curriculum_bot=bot,
-        render_mode="human",
-        render_style=args.render_style,
-        random_spawn=cur.random_spawn,
-        min_spawn_dist=cur.min_spawn_dist,
-        max_spawn_dist=cur.max_spawn_dist,
-        reward_overrides=stage.reward,
-        open_arena=cur.arena.as_dict() if cur.arena.mode == "random_open" else None,
+    frame_stride = (
+        int(getattr(meta, "frame_stride", 1))
+        if meta is not None
+        else cur.frame_stride
+    )
+    stack_action_mean = (
+        bool(getattr(meta, "stack_action_mean", False))
+        if meta is not None
+        else cur.stack_action_mean
     )
 
+    scheduler = CurriculumScheduler(cur)
+    _sync_watch_scheduler(scheduler, stage_idx, bot)
+    stack_env = make_strided_duel_eval_env(
+        cur,
+        scheduler,
+        render_mode="human",
+        render_style=args.render_style,
+        stack_action_mean=stack_action_mean,
+    )
+    env = stack_env.env
+
+    device = args.device
+    if device == "auto":
+        device = "cuda" if __import__("torch").cuda.is_available() else "cpu"
     try:
-        policy = PolicyBundle(
-            model_path,
-            frame_stack=frame_stack,
-            device=args.device,
-            expect_obs_dim=env.cfg.obs.dim,
+        model = PPO.load(str(model_path), device=device)
+    except Exception as e:
+        stack_env.close()
+        raise SystemExit(f"无法加载权重：{e}") from e
+    flat_obs = stacked_obs_dim(
+        int(env.cfg.obs.dim),
+        int(frame_stack),
+        action_dim=3 if stack_action_mean else 0,
+    )
+    if int(model.observation_space.shape[0]) != flat_obs:
+        stack_env.close()
+        raise SystemExit(
+            f"观测维不匹配：模型 {model.observation_space.shape[0]} "
+            f"≠ {flat_obs}（{env.cfg.obs.dim}×stack={frame_stack}）"
         )
-    except ValueError as e:
-        env.close()
-        raise SystemExit(f"无法观战：{e}") from e
 
     pygame.init()
-    obs, _ = env.reset(seed=cur.seed)
-    policy.reset()
+    obs, _ = stack_env.reset(seed=cur.seed)
     clock = pygame.time.Clock()
     episode = 1
     auto_restart = not args.no_auto_restart
@@ -331,7 +375,9 @@ def main(argv: list[str] | None = None) -> None:
     print(
         f"  环境     : obs={env.cfg.obs.dim}  "
         f"hits_to_die={env.cfg.sim.tank.hits_to_die}  "
-        f"堆叠={frame_stack}  确定性={args.deterministic}"
+        f"堆叠={frame_stack} stride={frame_stride}  "
+        f"均值堆叠={'开' if stack_action_mean else '关'}  "
+        f"确定性={args.deterministic}"
     )
     print("  Esc 退出 | R 重开 | 1/2/3 切换阶段0/1/2（手动难度）")
     print(f"  自动重开 : {'开' if auto_restart else '关'}")
@@ -343,6 +389,7 @@ def main(argv: list[str] | None = None) -> None:
     ]
     env.set_play_hud(True, hud)
 
+    predict = make_eval_predict_fn(model, stack_env)
     running = True
     while running:
         for event in pygame.event.get():
@@ -352,8 +399,7 @@ def main(argv: list[str] | None = None) -> None:
                 if event.key == pygame.K_ESCAPE:
                     running = False
                 elif event.key == pygame.K_r:
-                    obs, _ = env.reset()
-                    policy.reset()
+                    obs, _ = stack_env.reset()
                     episode += 1
                     hud[0] = f"检查结果 ep={episode} stage={stage.name}"
                     env.set_play_hud(True, hud)
@@ -366,9 +412,9 @@ def main(argv: list[str] | None = None) -> None:
                         _configure_bot_for_watch(
                             bot, stage.bot, use_anneal_end=not args.easy
                         )
+                        _sync_watch_scheduler(scheduler, stage_idx, bot)
                         env.set_reward_overrides(stage.reward)
-                        obs, _ = env.reset()
-                        policy.reset()
+                        obs, _ = stack_env.reset()
                         episode += 1
                         hud = [
                             f"检查结果 ep={episode} stage={stage.name}",
@@ -380,20 +426,19 @@ def main(argv: list[str] | None = None) -> None:
                             f"speed={bot.speed_scale:.2f}"
                         )
 
-        action = policy.predict(obs, deterministic=args.deterministic)
-        obs, _reward, terminated, truncated, info = env.step(action)
+        action = predict(obs, deterministic=args.deterministic)
+        obs, _reward, terminated, truncated, info = stack_env.step(action)
         env.render()
 
         if terminated or truncated:
             winner = info.get("winner", "?")
             print(
                 f"[结束] ep={episode} winner={winner} steps={info.get('step')} "
-                f"stage={stage.name}"
+                f"stage={stage.name} {_episode_bullet_summary(info)}"
             )
             if auto_restart:
                 time.sleep(0.35)
-                obs, _ = env.reset()
-                policy.reset()
+                obs, _ = stack_env.reset()
                 episode += 1
                 hud[0] = f"检查结果 ep={episode} stage={stage.name}"
                 env.set_play_hud(True, hud)
@@ -413,8 +458,7 @@ def main(argv: list[str] | None = None) -> None:
                                 paused = True
                                 break
                             if event.key == pygame.K_r:
-                                obs, _ = env.reset()
-                                policy.reset()
+                                obs, _ = stack_env.reset()
                                 episode += 1
                                 hud[0] = f"检查结果 ep={episode} stage={stage.name}"
                                 env.set_play_hud(True, hud)
@@ -426,7 +470,7 @@ def main(argv: list[str] | None = None) -> None:
 
         clock.tick(args.fps)
 
-    env.close()
+    stack_env.close()
     pygame.quit()
 
 

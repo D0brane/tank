@@ -2,15 +2,15 @@
 
 配置：[`configs/train/curriculum_aim.yaml`](../configs/train/curriculum_aim.yaml)（参数均有中文注释）
 
-环境：[`configs/env/sim_p0_tt2_aim_open.yaml`](../configs/env/sim_p0_tt2_aim_open.yaml) — **50 维**观测（无墙雷达）、每局 `arena.mode=random_open` 无边框随机空场；堆叠 16 → 输入 **800**。旧 58 维权重不兼容，需重训。
+环境：[`configs/env/sim_p0_tt2_aim_open.yaml`](../configs/env/sim_p0_tt2_aim_open.yaml) — **58 维**观测（含 8 向墙雷达）、每局 `arena.mode=random_open` 随机尺寸空场（**世界边界为外框墙**，无内墙）；选择性稀疏堆叠 `frame_stack=3`、`frame_stride=3`（敌方/墙/A* 取 **t-6,t-3,t**；己方开火与子弹仅当前帧）→ 输入 **92**；`stack_action_mean=true` → **101**。
 
 贴敌惩罚：`enemy_proximity_scale × (1 - d/margin)^power`（高次，贴脸才大罚）。
 
 ## 三阶段
 
-1. **stage1_static** — 空场固定靶；`aim_mode=current`；晋级 `hit_rate（直击）≥ 0.7`
-2. **stage2_linear** — 直线靶，速度 0.3→1.0 退火；`aim_mode=lead`；晋级 `hit_rate ≥ 0.30`（满速后）
-3. **stage3_turn_cruise** — 直行+偶发转弯，间隔 240→60；aim 权重降到 0.04；晋级 `hit_rate ≥ 0.55`
+1. **stage1_static** — 空场固定靶；`aim_mode=current`；晋级 `hit_rate（直击次数/己方开火）≥ 0.10`
+2. **stage2_linear** — 直线靶，速度 0.3→1.0 退火；`aim_mode=lead`；晋级 `hit_rate ≥ 0.06`（满速后）
+3. **stage3_turn_cruise** — 直行+偶发转弯，间隔 240→60；晋级 `hit_rate ≥ 0.05`（直行间隔退火到位）
 
 晋级看评测窗口，**不用**平均回报。
 
@@ -78,9 +78,9 @@ tensorboard --logdir runs/curriculum_aim/20260921_190215
 | `curriculum/mean_straight_frames` | 平均直行间隔 |
 | `curriculum/aim_align_scale` | 瞄准塑形权重 |
 | `curriculum/promoted` | 本次评测是否晋级（0/1） |
-| `eval/kill_rate` | 评测总命中率（本局己弹至少命中敌方一次，含反弹） |
-| `eval/hit_rate` | 评测直击率（本局至少一发未反弹命中敌方；晋级默认指标） |
-| `eval/median_ttk` | 中位击杀耗时（无击杀为 -1） |
+| `eval/kill_rate` | 评测汇总：己方命中敌方次数 / 己方开火数（含反弹，按 hit 事件计） |
+| `eval/hit_rate` | 评测汇总：己方未反弹命中次数 / 己方开火数（晋级默认指标） |
+| `eval/median_ttk` | 评测局 TTK 中位数：首直击步数；无直击则为该局结束步数（≤ `eval.max_episode_steps`） |
 | `reward/aim_align` 等 | 各奖励分项在本 rollout 的逐步均值 |
 | `reward/total_mean` | 分项之和（逐步均值） |
 | `rollout/*` / `train/*` | SB3 默认训练曲线 |

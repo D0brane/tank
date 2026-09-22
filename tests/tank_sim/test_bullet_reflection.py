@@ -128,3 +128,21 @@ def test_ascii_map_converts_to_edge_walls():
     h, v = edges_from_blocked(blocked)
     assert h[1][1] and h[2][1]  # 空地上下边
     assert v[1][1] and v[1][2]  # 空地左右边
+
+
+def test_open_arena_boundary_counts_as_bounce():
+    """空场外框墙：贴右边界飞出应反弹并记 bounced。"""
+    from tank_sim.core.map_loader import generate_open_arena
+
+    gm = generate_open_arena(cols=8, rows=4, cell_px=60.0, wall_thickness=4.0)
+    assert len(gm.wall_rects) > 0
+    w, h = map_bounds(gm)
+    # 贴右边界向外飞
+    x, y = w - 3.0, h * 0.5
+    vx, vy = 10.0, 0.0
+    x2, y2, vx2, vy2, bounced = resolve_bullet_wall_step(
+        x, y, vx, vy, radius=2.5, game_map=gm, dt=1.0
+    )
+    assert bounced is True
+    assert vx2 < 0
+    assert 0.0 <= x2 <= w

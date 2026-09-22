@@ -9,33 +9,13 @@ from typing import Any, Callable
 
 import numpy as np
 
-from tank_sim.envs.duel_env import DuelEnv
-
 from tank_rl.curriculum.config import CurriculumAimConfig, load_curriculum_aim_config
 from tank_rl.curriculum.scheduler import CurriculumScheduler, EvalMetrics
+from tank_rl.eval.duel_eval_env import make_eval_predict_fn, make_strided_duel_eval_env
 from tank_rl.eval.metrics import evaluate_duel_policy
-
-
-def make_curriculum_env(cfg: CurriculumAimConfig, scheduler: CurriculumScheduler) -> DuelEnv:
-    open_arena = None
-    if cfg.arena.mode == "random_open":
-        open_arena = cfg.arena.as_dict()
-    env = DuelEnv(
-        config_path=cfg.env_config,
-        map_path=cfg.map_path,
-        agent_side=cfg.agent_side,  # type: ignore[arg-type]
-        opponent="curriculum",
-        curriculum_bot=scheduler.bot,
-        random_spawn=cfg.random_spawn,
-        min_spawn_dist=cfg.min_spawn_dist,
-        max_spawn_dist=cfg.max_spawn_dist,
-        reward_overrides=scheduler.stage.reward,
-        render_mode=None,
-        open_arena=open_arena,
-    )
-    scheduler.attach_env(env)
-    env._curriculum_scheduler = scheduler  # type: ignore[attr-defined]
-    return env
+from tank_rl.train.action_mean_rollout import bind_action_mean_rollout
+from tank_rl.train.curriculum_env import make_curriculum_env
+from tank_rl.vec_env.strided_stack import VecStridedFrameStack, stacked_obs_dim
 
 
 def train_curriculum_aim(
@@ -61,7 +41,8 @@ def train_curriculum_aim(
     try:
         from stable_baselines3 import PPO
         from stable_baselines3.common.callbacks import BaseCallback
-        from stable_baselines3.common.vec_env import DummyVecEnv, VecFrameStack
+        from stable_baselines3.common.vec_env import DummyVecEnv
+
     except ImportError as e:  # pragma: no cover
         raise ImportError(
             "训练需要 stable-baselines3 / torch。请执行: pip install -e '.[rl]'"
@@ -91,6 +72,18 @@ def train_curriculum_aim(
                 raise ValueError(
                     f"续训 frame_stack 不匹配：权重 meta={meta.frame_stack}，"
                     f"配置={cfg.frame_stack}"
+                )
+            meta_stride = int(getattr(meta, "frame_stride", 1))
+            if meta_stride != cfg.frame_stride:
+                raise ValueError(
+                    f"续训 frame_stride 不匹配：权重 meta={meta_stride}，"
+                    f"配置={cfg.frame_stride}"
+                )
+            meta_mean = bool(getattr(meta, "stack_action_mean", False))
+            if meta_mean != cfg.stack_action_mean:
+                raise ValueError(
+                    f"续训 stack_action_mean 不匹配：权重 meta={meta_mean}，"
+                    f"配置={cfg.stack_action_mean}"
                 )
         else:
             # 无 meta：尽量从文件名恢复阶段；对手用阶段退火进度近似
@@ -143,7 +136,10 @@ def train_curriculum_aim(
 
     n_envs = max(1, cfg.n_envs)
     vec = DummyVecEnv([_thunk(i) for i in range(n_envs)])
-    vec = VecFrameStack(vec, n_stack=cfg.frame_stack)
+    action_dim = 3 if cfg.stack_action_mean else 0
+    vec = VecStridedFrameStack(
+        vec, cfg.frame_stack, cfg.frame_stride, action_dim=action_dim
+    )
 
     net_arch = cfg.ppo.get("net_arch", [64, 64])
     if resume_ckpt is not None:
@@ -174,6 +170,9 @@ def train_curriculum_aim(
             device=device,
             tensorboard_log=str(run_dir),
         )
+
+    if cfg.stack_action_mean:
+        bind_action_mean_rollout(model)
 
     class CurriculumCallback(BaseCallback):
         def __init__(self) -> None:
@@ -243,7 +242,14 @@ def train_curriculum_aim(
                 )
                 path.parent.mkdir(parents=True, exist_ok=True)
                 self.model.save(str(path))
-                _save_ckpt_meta(path, scheduler, timesteps=t, frame_stack=cfg.frame_stack)
+                _save_ckpt_meta(
+                    path,
+                    scheduler,
+                    timesteps=t,
+                    frame_stack=cfg.frame_stack,
+                    frame_stride=cfg.frame_stride,
+                    stack_action_mean=cfg.stack_action_mean,
+                )
                 _update_latest_symlink(run_dir, path)
                 print(f"[存盘] {path}")
 
@@ -270,6 +276,8 @@ def train_curriculum_aim(
                     run_dir=run_dir,
                     timesteps=t,
                     frame_stack=cfg.frame_stack,
+                    frame_stride=cfg.frame_stride,
+                    stack_action_mean=cfg.stack_action_mean,
                     completed_stage_index=stage_idx_before,
                     completed_stage_name=prev_name,
                     stage_timesteps=stage_steps_before,
@@ -320,7 +328,14 @@ def train_curriculum_aim(
     final_t = int(model.num_timesteps)
     ckpt = run_dir / "final_model.zip"
     model.save(str(ckpt))
-    _save_ckpt_meta(ckpt, scheduler, timesteps=final_t, frame_stack=cfg.frame_stack)
+    _save_ckpt_meta(
+        ckpt,
+        scheduler,
+        timesteps=final_t,
+        frame_stack=cfg.frame_stack,
+        frame_stride=cfg.frame_stride,
+        stack_action_mean=cfg.stack_action_mean,
+    )
     _update_latest_symlink(run_dir, ckpt)
     _print_finish(scheduler, ckpt, run_dir)
     return model
@@ -341,11 +356,23 @@ def _update_latest_symlink(run_dir: Path, checkpoint: Path) -> None:
         pass
 
 
-def _save_ckpt_meta(path, scheduler, *, timesteps: int, frame_stack: int) -> None:
+def _save_ckpt_meta(
+    path,
+    scheduler,
+    *,
+    timesteps: int,
+    frame_stack: int,
+    frame_stride: int,
+    stack_action_mean: bool,
+) -> None:
     from tank_rl.checkpoint_meta import build_meta_from_scheduler, save_curriculum_meta
 
     meta = build_meta_from_scheduler(
-        scheduler, timesteps=timesteps, frame_stack=frame_stack
+        scheduler,
+        timesteps=timesteps,
+        frame_stack=frame_stack,
+        frame_stride=frame_stride,
+        stack_action_mean=stack_action_mean,
     )
     meta_path = save_curriculum_meta(path, meta)
     print(
@@ -361,6 +388,8 @@ def _save_promotion_checkpoint(
     run_dir: Path,
     timesteps: int,
     frame_stack: int,
+    frame_stride: int,
+    stack_action_mean: bool,
     completed_stage_index: int,
     completed_stage_name: str,
     stage_timesteps: int,
@@ -396,6 +425,8 @@ def _save_promotion_checkpoint(
         speed_scale=speed_scale,
         mean_straight_frames=mean_straight_frames,
         turn_duration=turn_duration,
+        frame_stride=frame_stride,
+        stack_action_mean=stack_action_mean,
     )
     meta_path = save_curriculum_meta(path, meta)
     eval_path = save_promotion_sidecar(
@@ -460,7 +491,18 @@ def _print_banner(
     print(f"  设备         : {device}")
     print(f"  总步数       : {cfg.total_timesteps:,}")
     print(f"  并行环境     : {cfg.n_envs}")
-    print(f"  帧堆叠       : {cfg.frame_stack} → 输入维 {obs_dim * cfg.frame_stack}")
+    from tank_rl.vec_env.strided_stack import stack_depth, stack_lags
+
+    _depth = stack_depth(cfg.frame_stack, cfg.frame_stride)
+    _lags = stack_lags(cfg.frame_stack, cfg.frame_stride)
+    _in_dim = stacked_obs_dim(
+        obs_dim, cfg.frame_stack, action_dim=3 if cfg.stack_action_mean else 0
+    )
+    _mean_note = " + 确定性均值×3" if cfg.stack_action_mean else ""
+    print(
+        f"  帧堆叠       : 选择性 {cfg.frame_stack} 步距={cfg.frame_stride} "
+        f"depth={_depth} lags={_lags}（开火/子弹仅当前）{_mean_note} → 输入维 {_in_dim}"
+    )
     print(f"  评测间隔     : 每 {cfg.eval_every_timesteps:,} 步 / {cfg.eval_n_episodes} 局"
           f"（单局≤{cfg.eval_max_episode_steps}步）")
     print(f"  存盘间隔     : 每 {cfg.checkpoint_every_timesteps:,} 步 → {run_dir}/checkpoints/")
@@ -492,16 +534,17 @@ def _print_eval_block(
     metric_ok = value >= pr.threshold
     ttk_s = f"{metrics.median_ttk:.0f}" if metrics.median_ttk is not None else "无"
     metric_zh = {
-        "kill_rate": "总命中率 kill_rate",
-        "hit_rate": "直击命中率 hit_rate",
+        "kill_rate": "命中/开火 kill_rate",
+        "hit_rate": "直击/开火 hit_rate",
     }.get(pr.metric, pr.metric)
     print("-" * 60)
     print(f"[评测] 阶段={prev_name}  局数={metrics.n_episodes}")
     print(
-        f"  总命中率 kill_rate = {metrics.kill_rate:.3f}  "
-        f"直击率 hit_rate = {metrics.hit_rate:.3f}  "
+        f"  kill_rate(命中/开火) = {metrics.kill_rate:.3f}  "
+        f"hit_rate(直击/开火) = {metrics.hit_rate:.3f}  "
         f"中位TTK = {ttk_s}"
     )
+    print("  TTK口径     : 首直击步数；无直击=该局结束步数（评测步限封顶）")
     print(
         f"  晋级条件 {metric_zh}≥{pr.threshold:.2f}  "
         f"当前={value:.3f}  → {'指标达标' if metric_ok else '指标未达标'}"
@@ -622,13 +665,8 @@ def _eval_current(model, cfg: CurriculumAimConfig, scheduler: CurriculumSchedule
         mean_straight_frames=scheduler.bot.mean_straight_frames,
         turn_duration=scheduler.bot.turn_duration,
     )
-    env = make_curriculum_env(cfg, eval_sched)
-    stacked = _ConcatFrameStack(env, cfg.frame_stack)
-
-    def predict_fn(obs, deterministic=True):
-        action, _ = model.predict(obs, deterministic=deterministic)
-        return np.asarray(action, dtype=np.float32)
-
+    stacked = make_strided_duel_eval_env(cfg, eval_sched)
+    predict_fn = make_eval_predict_fn(model, stacked)
     return evaluate_duel_policy(
         stacked,
         predict_fn,
@@ -636,26 +674,3 @@ def _eval_current(model, cfg: CurriculumAimConfig, scheduler: CurriculumSchedule
     )
 
 
-class _ConcatFrameStack:
-    """把最近 k 帧观测在最后一维拼接，对齐 SB3 VecFrameStack(1D)。"""
-
-    def __init__(self, env: DuelEnv, k: int) -> None:
-        self.env = env
-        self.k = k
-        self._buf: list[np.ndarray] = []
-
-    def reset(self, **kwargs):
-        obs, info = self.env.reset(**kwargs)
-        # 对齐 SB3 VecFrameStack：历史填 0，仅最新槽为当前帧
-        z = np.zeros_like(obs)
-        self._buf = [z.copy() for _ in range(self.k - 1)] + [obs.copy()]
-        return self._stacked(), info
-
-    def step(self, action):
-        obs, reward, terminated, truncated, info = self.env.step(action)
-        self._buf.append(obs.copy())
-        self._buf = self._buf[-self.k :]
-        return self._stacked(), reward, terminated, truncated, info
-
-    def _stacked(self) -> np.ndarray:
-        return np.concatenate(self._buf, axis=-1).astype(np.float32)

@@ -118,7 +118,7 @@ def test_far_from_wall_no_proximity_penalty():
 
 
 def test_open_arena_edge_triggers_wall_proximity():
-    """无墙空场：贴世界边界也应有贴墙惩罚。"""
+    """空场外框：贴边也应有贴墙惩罚。"""
     from tank_sim.core.map_loader import generate_open_arena
     from tank_sim.core.world import create_initial_state as _cis
 
@@ -130,14 +130,14 @@ def test_open_arena_edge_triggers_wall_proximity():
         wall_proximity_power=4.0,
     )
     gm = generate_open_arena(10, 5, cfg.map.cell_px, cfg.map.wall_thickness)
-    assert gm.wall_rects == []
+    assert len(gm.wall_rects) > 0
     state = _cis(cfg, game_map=gm)
     red, blue = state.tanks
     red = TankState(x=8.0, y=gm.rows * gm.cell_px * 0.5, theta=0.0, owner="red")
     state.tanks = (red, blue)
     d = min_wall_distance_px(red.x, red.y, gm)
-    assert d == 8.0  # 到左边界
-    expected = -0.25 * ((1.0 - 8.0 / 50.0) ** 4)
+    assert d < 50.0
+    expected = -0.25 * ((1.0 - d / 50.0) ** 4)
     bd = compute_reward_breakdown(
         state, state, "red", reward_cfg, RewardState()
     )

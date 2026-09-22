@@ -91,6 +91,9 @@ class RewardConfig:
     move_switch_penalty: float = 0.0
     # 己方子弹反弹后再击杀的奖励（低于直击 kill）
     kill_bounce: float = 40.0
+    # 己弹近敌奖：scale × max(0, 1 - d/margin)^power；scale=0 关闭
+    bullet_near_enemy_margin: float = 80.0
+    bullet_near_enemy_power: float = 1.0
     # 贴墙惩罚：scale × max(0, 1 - d/margin)^power；scale=0 关闭
     wall_proximity_scale: float = 0.0
     # 车心到最近墙的像素阈值；小于此距离开始惩罚
@@ -202,6 +205,12 @@ def load_env_config(path: str | Path) -> EnvConfig:
             rotate_penalty=float(raw["reward"].get("rotate_penalty", 0.0)),
             move_switch_penalty=float(raw["reward"].get("move_switch_penalty", 0.0)),
             kill_bounce=float(raw["reward"].get("kill_bounce", 40.0)),
+            bullet_near_enemy_margin=float(
+                raw["reward"].get("bullet_near_enemy_margin", 80.0)
+            ),
+            bullet_near_enemy_power=float(
+                raw["reward"].get("bullet_near_enemy_power", 1.0)
+            ),
             wall_proximity_scale=float(
                 raw["reward"].get("wall_proximity_scale", 0.0)
             ),

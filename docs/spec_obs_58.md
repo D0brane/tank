@@ -19,8 +19,8 @@
 - 敌车 `(lvx,lvy,ω)` → 离散 `m,r`（定速进退/转向）
 - 己方 / 敌方开火阶段双段编码：冷却 [-1,0]，就绪后再计 1.5s → (0,1]
 
-历史堆叠（仅 MLP 训练）：`frame_stack × 58`，默认见 `configs/train/ppo_mlp_sb3.yaml`（16 帧 → 928 维输入网络）。
+历史堆叠（MLP 训练）：瞄准课程为 **选择性稀疏堆叠** `frame_stack=3`、`frame_stride=3`：敌方 / 墙雷达 / A* 取 **t-6,t-3,t**；**己方开火阶段与全部子弹槽仅当前帧** → **92** 维；若 `stack_action_mean=true`，再拼接同 lag 的确定性动作均值（3 维×3）→ **101** 维。`frame_stride=1` 时为连续采样。基线 `ppo_mlp_sb3.yaml` 仍为 16 连续整帧堆叠 → 928 维。
 
-瞄准课程无雷达变体见 [`spec_obs_50.md`](spec_obs_50.md)（`wall_radar_rays=0` → 50 维，堆叠 800）。
+瞄准课程空场亦为 58 维；世界边界为外框墙，雷达测墙 AABB。旧无雷达变体见 [`spec_obs_50.md`](spec_obs_50.md)。
 
 LSTM 阶段：不堆叠，单帧 58 维。

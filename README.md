@@ -1,6 +1,6 @@
 # Tank — 坦克动荡 2 风格自博弈 RL
 
-仿真包 `tank_sim` 提供 Gymnasium 环境；瞄准课程默认 **50 维**单帧观测（无墙雷达，见 `configs/env/sim_p0_tt2_aim_open.yaml` / `docs/spec_obs_50.md`），有墙地图仍可用 classic **58 维**（8 向雷达）。算法包 `tank_rl` 提供瞄准课程 PPO（见 `configs/train/curriculum_aim.yaml` / `docs/curriculum_aim.md`）。
+仿真包 `tank_sim` 提供 Gymnasium 环境；瞄准课程默认 **58 维**单帧观测（obs v3，10 子弹槽 + 8 向墙/边界雷达，见 `configs/env/sim_p0_tt2_aim_open.yaml` / `docs/spec_obs_58.md`）。算法包 `tank_rl` 提供瞄准课程 PPO（见 `configs/train/curriculum_aim.yaml` / `docs/curriculum_aim.md`）。
 
 ## 安装（推荐 Conda 环境 `tank`）
 

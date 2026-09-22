@@ -48,7 +48,7 @@ def run_one(
 
     from tank_rl.curriculum.config import load_curriculum_aim_config
     from tank_rl.curriculum.scheduler import CurriculumScheduler
-    from tank_rl.train.ppo_curriculum import make_curriculum_env
+    from tank_rl.train.curriculum_env import make_curriculum_env
 
     cfg = load_curriculum_aim_config(config_path)
     cfg.n_envs = n_envs

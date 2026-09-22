@@ -1,4 +1,4 @@
-# 瞄准课程：无墙雷达（50 维）+ 无边框空场；物理与 classic 一致
+# 瞄准课程：8 向墙雷达（58 维）+ 空场（有外框墙、无内墙）；物理与 classic 一致
 sim:
   fps: 60
   tank:
@@ -24,10 +24,10 @@ map:
 
 obs:
   version: 3
-  # 1 + 6 + 4×10 + 0 + 3 = 50（无墙雷达）
-  dim: 50
+  # 1 + 6 + 4×10 + 8 + 3 = 58（含墙雷达；空场测世界边界）
+  dim: 58
   bullet_slots: 10
-  wall_radar_rays: 0
+  wall_radar_rays: 8
 
 planner:
   refresh_every_steps: 2
@@ -39,13 +39,15 @@ reward:
   death: -100.0
   survive_per_step: 0.05
   bullet_near_enemy: 0.2
+  bullet_near_enemy_margin: 80.0
+  bullet_near_enemy_power: 1.0
   bullet_threat_self: -0.1
   fire_penalty: -0.01
   fire_on_cd_penalty: -0.05
   move_penalty: -0.002
   rotate_penalty: 0.0
   move_switch_penalty: -0.02
-  # 空场无墙；贴敌由课程 stage 覆盖
+  # 空场贴边由课程 stage 覆盖；基线关
   wall_proximity_scale: 0.0
   wall_proximity_margin: 40.0
   wall_proximity_power: 4.0

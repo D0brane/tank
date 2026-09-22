@@ -39,7 +39,7 @@ class StageConfig:
 
 @dataclass
 class ArenaConfig:
-    """课程空场：random_open=每局随机尺寸无边框；map=用 map_path。"""
+    """课程空场：random_open=每局随机尺寸（有外框、无内墙）；map=用 map_path。"""
 
     mode: Literal["map", "random_open"] = "map"
     cols_min: int = 8
@@ -65,6 +65,8 @@ class CurriculumAimConfig:
     map_path: str
     n_envs: int
     frame_stack: int
+    frame_stride: int
+    stack_action_mean: bool
     agent_side: str
     random_spawn: bool
     min_spawn_dist: float
@@ -136,6 +138,8 @@ def load_curriculum_aim_config(path: str | Path) -> CurriculumAimConfig:
         map_path=str(raw["map_path"]),
         n_envs=int(env.get("n_envs", 8)),
         frame_stack=int(env.get("frame_stack", 16)),
+        frame_stride=int(env.get("frame_stride", 1)),
+        stack_action_mean=bool(env.get("stack_action_mean", False)),
         agent_side=str(env.get("agent_side", "red")),
         random_spawn=bool(env.get("random_spawn", True)),
         min_spawn_dist=float(env.get("min_spawn_dist", 120.0)),

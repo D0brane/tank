@@ -108,6 +108,9 @@ class DuelEnv(gym.Env):
         self._episode_near_hit = False
         self._episode_hit_enemy = False
         self._episode_direct_hit_enemy = False
+        self._episode_bullets_fired = 0
+        self._episode_hits_on_enemy = 0
+        self._episode_direct_hits_on_enemy = 0
 
     @property
     def state(self):
@@ -204,6 +207,9 @@ class DuelEnv(gym.Env):
         self._episode_near_hit = False
         self._episode_hit_enemy = False
         self._episode_direct_hit_enemy = False
+        self._episode_bullets_fired = 0
+        self._episode_hits_on_enemy = 0
+        self._episode_direct_hits_on_enemy = 0
         if self._curriculum_bot is not None:
             self._curriculum_bot.reset(seed=None if seed is None else int(seed) + 17)
         return self._agent_obs(), {"step": 0}
@@ -228,14 +234,18 @@ class DuelEnv(gym.Env):
 
         if self.agent_side == "red" and self._state.red_fired:
             self._episode_fired = True
+            self._episode_bullets_fired += 1
         if self.agent_side == "blue" and self._state.blue_fired:
             self._episode_fired = True
+            self._episode_bullets_fired += 1
         for ev in self._state.hit_events:
             if ev.attacker != self.agent_side or ev.victim == self.agent_side:
                 continue
             self._episode_hit_enemy = True
+            self._episode_hits_on_enemy += 1
             if ev.bounces == 0:
                 self._episode_direct_hit_enemy = True
+                self._episode_direct_hits_on_enemy += 1
         self._episode_near_hit = self._episode_near_hit or _own_bullet_near_enemy(
             self._state, self.agent_side
         )
@@ -259,10 +269,13 @@ class DuelEnv(gym.Env):
             "winner": self._state.winner,
             "step": self._state.step,
             "agent_won": agent_won,
-            # 晋级 hit_rate：本局至少一发己弹未反弹命中敌方（不必致死）
+            # 本局至少一发未反弹命中敌方（不必致死）
             "direct_hit": self._episode_direct_hit_enemy,
-            # 评测 kill_rate（总命中）：本局己弹至少打中敌方一次（含反弹）
+            # 本局己弹至少打中敌方一次（含反弹）
             "hit_enemy": self._episode_hit_enemy,
+            "bullets_fired": self._episode_bullets_fired,
+            "hits_on_enemy": self._episode_hits_on_enemy,
+            "direct_hits_on_enemy": self._episode_direct_hits_on_enemy,
             "near_hit": self._episode_near_hit,
             "kill_bullet_bounces": self._state.kill_bullet_bounces,
             "kill_bullet_owner": self._state.kill_bullet_owner,
@@ -342,6 +355,8 @@ def _merge_reward(base: RewardConfig, overrides: dict[str, Any]) -> RewardConfig
         "rotate_penalty": base.rotate_penalty,
         "move_switch_penalty": base.move_switch_penalty,
         "kill_bounce": base.kill_bounce,
+        "bullet_near_enemy_margin": base.bullet_near_enemy_margin,
+        "bullet_near_enemy_power": base.bullet_near_enemy_power,
         "wall_proximity_scale": base.wall_proximity_scale,
         "wall_proximity_margin": base.wall_proximity_margin,
         "wall_proximity_power": base.wall_proximity_power,

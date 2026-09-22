@@ -42,6 +42,7 @@ def test_save_load_curriculum_meta(tmp_path: Path):
     assert loaded.speed_scale == 0.55
     assert loaded.bot_mode == "linear"
     assert loaded.frame_stack == 16
+    assert loaded.frame_stride == 1
 
 
 def test_parse_stage_index_from_filename():

@@ -216,15 +216,15 @@ def generate_open_arena(
     wall_thickness: float = 4.0,
 ) -> GameMap:
     """
-    无内墙、无外框的开放空场（瞄准课程）。
+    无内墙、有外框的空场（瞄准课程）。
 
+    世界边界为真正的边墙：碰撞 / 子弹反弹 / 雷达 / 贴墙惩罚与有墙地图一致。
     出生点占位为中心左右；局内通常用 random_spawn 覆盖。
-    坦克出界靠软钳制（见 ``clamp_tank_to_map``），不靠墙碰撞。
     """
     if cols < 2 or rows < 1:
         raise ValueError(f"open arena 尺寸无效: cols={cols} rows={rows}")
     blocked = [[False for _ in range(cols)] for _ in range(rows)]
-    h_walls, v_walls = edges_from_blocked(blocked, seal_border=False)
+    h_walls, v_walls = edges_from_blocked(blocked, seal_border=True)
     mid_y = (rows - 1) * 0.5
     spawn_red = cell_center(1, int(mid_y), cell_px)
     spawn_blue = cell_center(cols - 2, int(mid_y), cell_px)

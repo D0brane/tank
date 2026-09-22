@@ -31,17 +31,22 @@ def test_observation_is_58_v3():
 
 
 def test_observation_is_50_aim_open_no_radar():
-    cfg = load_env_config("configs/env/sim_p0_tt2_aim_open.yaml")
-    assert cfg.obs.wall_radar_rays == 0
-    assert cfg.obs.dim == 50
+    """历史：wall_radar_rays=0 → 50 维；当前 aim_open 已恢复 58。"""
     assert expected_obs_dim(10, 0) == 50
+
+
+def test_observation_is_58_aim_open_with_radar():
+    cfg = load_env_config("configs/env/sim_p0_tt2_aim_open.yaml")
+    assert cfg.obs.wall_radar_rays == 8
+    assert cfg.obs.dim == 58
+    assert expected_obs_dim(10, 8) == 58
     from tank_sim.core.map_loader import generate_open_arena
 
     gm = generate_open_arena(10, 5, cfg.map.cell_px, cfg.map.wall_thickness)
     state = create_initial_state(cfg, game_map=gm)
     builder = ObservationBuilder(cfg)
     red = builder.build(state, "red")
-    assert red.shape == (50,)
+    assert red.shape == (58,)
     assert red.dtype == np.float32
 
 

@@ -1,4 +1,4 @@
-"""无边框开放空场。"""
+"""开放空场（有外框墙、无内墙）。"""
 
 import numpy as np
 
@@ -9,12 +9,16 @@ from tank_sim.core.types import TankState
 from tank_sim.envs.duel_env import DuelEnv
 
 
-def test_generate_open_arena_has_no_walls():
+def test_generate_open_arena_has_border_only():
     gm = generate_open_arena(cols=10, rows=5, cell_px=60.0, wall_thickness=4.0)
     assert gm.cols == 10 and gm.rows == 5
-    assert gm.wall_rects == []
-    assert all(not any(row) for row in gm.h_walls)
-    assert all(not any(row) for row in gm.v_walls)
+    assert len(gm.wall_rects) > 0
+    # 外框封边
+    assert all(gm.h_walls[0]) and all(gm.h_walls[gm.rows])
+    assert all(gm.v_walls[r][0] and gm.v_walls[r][gm.cols] for r in range(gm.rows))
+    # 内部无竖/横隔墙（中间格子之间）
+    assert not gm.v_walls[2][5]
+    assert not gm.h_walls[2][5]
     assert all(not any(row) for row in gm.blocked)
 
 
@@ -61,16 +65,16 @@ def test_duel_env_random_open_resizes():
     sizes = set()
     for i in range(12):
         obs, _ = env.reset(seed=100 + i)
-        assert obs.shape == (50,)
+        assert obs.shape == (58,)
         assert env._state is not None
         gm = env._state.game_map
         sizes.add((gm.cols, gm.rows))
-        assert gm.wall_rects == []
+        assert len(gm.wall_rects) > 0
     env.close()
     assert len(sizes) >= 2
 
 
 def test_aim_open_env_config_dim():
     cfg = load_env_config("configs/env/sim_p0_tt2_aim_open.yaml")
-    assert cfg.obs.dim == 50
-    assert cfg.obs.wall_radar_rays == 0
+    assert cfg.obs.dim == 58
+    assert cfg.obs.wall_radar_rays == 8

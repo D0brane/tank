@@ -132,22 +132,30 @@ def eject_bullet_from_wall(
     vy: float,
     radius: float,
     game_map: GameMap,
-) -> tuple[float, float, float, float]:
+) -> tuple[float, float, float, float, bool]:
     """
     若子弹嵌在墙内或越界，推出到空地并翻转移动方向分量。
+
+    返回 (x, y, vx, vy, bounced)；``bounced`` 表示本函数因边界/嵌墙做了速度反射
+    （无墙空场贴边钳制翻转移速也算反弹）。
     """
+    bounced = False
     x, y, clamped = clamp_bullet_to_map(x, y, radius, game_map)
     if clamped:
         w, h = map_bounds(game_map)
         margin = game_map.wall_thickness * 0.5 + radius
         if x <= margin + 1e-6 and vx < 0:
             vx = -vx
+            bounced = True
         if x >= w - margin - 1e-6 and vx > 0:
             vx = -vx
+            bounced = True
         if y <= margin + 1e-6 and vy < 0:
             vy = -vy
+            bounced = True
         if y >= h - margin - 1e-6 and vy > 0:
             vy = -vy
+            bounced = True
 
     for _ in range(8):
         if not bullet_in_wall(x, y, radius, game_map):
@@ -175,14 +183,20 @@ def eject_bullet_from_wall(
             # 竖墙：沿 x 推
             push = (ww * 0.5 + radius + 0.5) * (1.0 if dx >= 0 else -1.0)
             x = best.cx + push
-            vx = abs(vx) * (1.0 if dx >= 0 else -1.0)
+            new_vx = abs(vx) * (1.0 if dx >= 0 else -1.0)
+            if new_vx != vx:
+                bounced = True
+            vx = new_vx
         else:
             push = (wh * 0.5 + radius + 0.5) * (1.0 if dy >= 0 else -1.0)
             y = best.cy + push
-            vy = abs(vy) * (1.0 if dy >= 0 else -1.0)
+            new_vy = abs(vy) * (1.0 if dy >= 0 else -1.0)
+            if new_vy != vy:
+                bounced = True
+            vy = new_vy
         x, y, _ = clamp_bullet_to_map(x, y, radius, game_map)
 
-    return x, y, vx, vy
+    return x, y, vx, vy, bounced
 
 
 def resolve_bullet_wall_step(
@@ -198,10 +212,12 @@ def resolve_bullet_wall_step(
     子弹单子步：线段扫掠 + 墙边法线反射。
 
     对角点：若最早时刻附近同时撞到水平边与竖直边，则 vx、vy 同时翻转。
-    返回 (x, y, vx, vy, bounced)；bounced 表示本子步发生了墙反射。
+    返回 (x, y, vx, vy, bounced)；bounced 表示本子步发生了墙/边界反射。
     """
+    bounced = False
     if bullet_in_wall(x0, y0, radius, game_map):
-        x0, y0, vx, vy = eject_bullet_from_wall(x0, y0, vx, vy, radius, game_map)
+        x0, y0, vx, vy, ej = eject_bullet_from_wall(x0, y0, vx, vy, radius, game_map)
+        bounced = bounced or ej
 
     x1 = x0 + vx * dt
     y1 = y0 + vy * dt
@@ -220,7 +236,6 @@ def resolve_bullet_wall_step(
                 continue
             candidates.append((t, ix, iy, nx, ny))
 
-    bounced = False
     if not candidates:
         x, y = x1, y1
     else:
@@ -249,5 +264,6 @@ def resolve_bullet_wall_step(
         x = ix + nx * eps
         y = iy + ny * eps
 
-    x, y, vx, vy = eject_bullet_from_wall(x, y, vx, vy, radius, game_map)
+    x, y, vx, vy, ej = eject_bullet_from_wall(x, y, vx, vy, radius, game_map)
+    bounced = bounced or ej
     return x, y, vx, vy, bounced

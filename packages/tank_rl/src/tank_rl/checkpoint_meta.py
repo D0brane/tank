@@ -22,7 +22,9 @@ class CurriculumCheckpointMeta:
     mean_straight_frames: float
     turn_duration: int
     frame_stack: int
-    schema: int = 1
+    frame_stride: int = 1
+    stack_action_mean: bool = False
+    schema: int = 3
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -43,6 +45,8 @@ class CurriculumCheckpointMeta:
             ),
             turn_duration=int(bot.get("turn_duration", raw.get("turn_duration", 30))),
             frame_stack=int(raw.get("frame_stack", 16)),
+            frame_stride=int(raw.get("frame_stride", 1)),
+            stack_action_mean=bool(raw.get("stack_action_mean", False)),
         )
 
 
@@ -61,6 +65,8 @@ def save_curriculum_meta(checkpoint: str | Path, meta: CurriculumCheckpointMeta)
         "stage_name": meta.stage_name,
         "stage_timesteps": meta.stage_timesteps,
         "frame_stack": meta.frame_stack,
+        "frame_stride": meta.frame_stride,
+        "stack_action_mean": meta.stack_action_mean,
         "bot": {
             "mode": meta.bot_mode,
             "speed_scale": meta.speed_scale,
@@ -187,6 +193,8 @@ def build_meta_snapshot(
     speed_scale: float,
     mean_straight_frames: float,
     turn_duration: int,
+    frame_stride: int = 1,
+    stack_action_mean: bool = False,
 ) -> CurriculumCheckpointMeta:
     """固定快照（晋级存盘：记录刚完成阶段的对手参数）。"""
     return CurriculumCheckpointMeta(
@@ -199,6 +207,8 @@ def build_meta_snapshot(
         mean_straight_frames=float(mean_straight_frames),
         turn_duration=int(turn_duration),
         frame_stack=int(frame_stack),
+        frame_stride=int(frame_stride),
+        stack_action_mean=bool(stack_action_mean),
     )
 
 
@@ -235,6 +245,8 @@ def build_meta_from_scheduler(
     *,
     timesteps: int,
     frame_stack: int,
+    frame_stride: int = 1,
+    stack_action_mean: bool = False,
 ) -> CurriculumCheckpointMeta:
     """从当前 CurriculumScheduler 快照对手与阶段。"""
     stage = scheduler.stage
@@ -249,4 +261,6 @@ def build_meta_from_scheduler(
         mean_straight_frames=float(bot.mean_straight_frames),
         turn_duration=int(bot.turn_duration),
         frame_stack=int(frame_stack),
+        frame_stride=int(frame_stride),
+        stack_action_mean=bool(stack_action_mean),
     )

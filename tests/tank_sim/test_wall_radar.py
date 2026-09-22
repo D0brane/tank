@@ -7,6 +7,18 @@ from tank_sim.core.world import create_initial_state
 from tank_sim.observation.wall_radar import build_wall_radar
 
 
+def test_open_arena_radar_sees_boundary():
+    """无墙空场：朝右贴右边界时正前射线应明显短于朝左。"""
+    from tank_sim.core.map_loader import generate_open_arena
+
+    gm = generate_open_arena(cols=10, rows=5, cell_px=60.0, wall_thickness=4.0)
+    w, h = map_bounds(gm)
+    tank = TankState(x=w - 20.0, y=h * 0.5, theta=0.0, owner="red")
+    radar = build_wall_radar(tank, gm, n_rays=8)
+    assert radar[0] < radar[4]
+    assert radar[0] < 0.2
+
+
 def test_facing_outer_wall_forward_shorter():
     """贴右墙、车头朝右：0° 射线明显短于侧向/后方。"""
     cfg = load_env_config(default_config_path())

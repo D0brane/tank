@@ -27,7 +27,7 @@ class RewardBreakdown:
     """单步各奖励分项（便于 TensorBoard 分别记录）。"""
 
     total: float = 0.0
-    survive: float = 0.0
+    survive_per_step: float = 0.0
     fire: float = 0.0
     fire_on_cd: float = 0.0
     move: float = 0.0
@@ -93,7 +93,7 @@ def compute_reward_breakdown(
     prev_enemy = prev.tanks[1] if side == "red" else prev.tanks[0]
 
     parts = RewardBreakdown()
-    parts.survive = float(cfg.survive_per_step)
+    parts.survive_per_step = float(cfg.survive_per_step)
 
     fired = (side == "red" and curr.red_fired) or (side == "blue" and curr.blue_fired)
     if fired:
@@ -128,7 +128,7 @@ def compute_reward_breakdown(
     _apply_hit_scores(parts, curr, side, cfg)
 
     parts.total = (
-        parts.survive
+        parts.survive_per_step
         + parts.fire
         + parts.fire_on_cd
         + parts.move
@@ -161,8 +161,8 @@ def _apply_hit_scores(
                 parts.kill += float(cfg.kill)
 
 
-def _proximity_penalty(d: float, scale: float, margin: float, power: float) -> float:
-    """通用近距惩罚：scale × (1 - d/margin)^power；d≥margin 为 0。"""
+def _proximity_shaping(d: float, scale: float, margin: float, power: float) -> float:
+    """通用近距塑形：scale × (1 - d/margin)^power；d≥margin 为 0。scale 可正（奖）可负（罚）。"""
     if scale == 0.0:
         return 0.0
     m = max(1e-6, float(margin))
@@ -170,6 +170,11 @@ def _proximity_penalty(d: float, scale: float, margin: float, power: float) -> f
         return 0.0
     p = max(1.0, float(power))
     return float(scale) * ((1.0 - d / m) ** p)
+
+
+def _proximity_penalty(d: float, scale: float, margin: float, power: float) -> float:
+    """通用近距惩罚（同 ``_proximity_shaping``）。"""
+    return _proximity_shaping(d, scale, margin, power)
 
 
 def _wall_proximity(me: TankState, curr: WorldState, cfg: RewardConfig) -> float:
@@ -254,8 +259,12 @@ def _bullet_shaping_parts(
             continue
         enemy = curr.tanks[1] if me.owner == "red" else curr.tanks[0]
         de = math.hypot(b.x - enemy.x, b.y - enemy.y)
-        if de < 80:
-            near += cfg.bullet_near_enemy * (1.0 - de / 80.0)
+        near += _proximity_shaping(
+            de,
+            cfg.bullet_near_enemy,
+            cfg.bullet_near_enemy_margin,
+            cfg.bullet_near_enemy_power,
+        )
         ds = math.hypot(b.x - me.x, b.y - me.y)
         if ds < 80:
             threat += cfg.bullet_threat_self * (1.0 - ds / 80.0)

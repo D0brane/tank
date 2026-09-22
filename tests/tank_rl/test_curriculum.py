@@ -173,11 +173,11 @@ def test_curriculum_yaml_and_promote():
     assert sch.stage.name == "stage1_static"
     # 未达标
     assert not sch.maybe_promote(
-        EvalMetrics(kill_rate=0.1, hit_rate=0.1, median_ttk=100.0, n_episodes=10)
+        EvalMetrics(kill_rate=0.1, hit_rate=0.09, median_ttk=100.0, n_episodes=10)
     )
-    # 达标晋级
+    # 达标晋级（子弹比率口径）
     assert sch.maybe_promote(
-        EvalMetrics(kill_rate=0.8, hit_rate=0.8, median_ttk=200.0, n_episodes=10)
+        EvalMetrics(kill_rate=0.2, hit_rate=0.12, median_ttk=200.0, n_episodes=10)
     )
     assert sch.stage.name == "stage2_linear"
 
