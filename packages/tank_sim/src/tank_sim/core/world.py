@@ -15,8 +15,46 @@ from tank_sim.core.tank import (
     tick_cooldown,
     try_fire,
 )
-from tank_sim.core.types import ControlIntent, GameMap, TankState, WorldState
+from tank_sim.core.types import BulletState, ControlIntent, GameMap, TankState, WorldState
 from tank_sim.core.spawn import DualSpawn
+
+
+def pop_oldest_bullet(bullets: list[BulletState], owner: str) -> bool:
+    """移除指定方最早的一发（age 最大，并列取 id 最小）。成功返回 True。"""
+    best_i: int | None = None
+    best_key: tuple[int, int] | None = None
+    for i, b in enumerate(bullets):
+        if b.owner != owner:
+            continue
+        # age 降序优先；同 age 时 id 升序（更早发放）
+        key = (b.age, -b.id)
+        if best_key is None or key > best_key:
+            best_key = key
+            best_i = i
+    if best_i is None:
+        return False
+    bullets.pop(best_i)
+    return True
+
+
+def _maybe_evict_for_fire(
+    bullets: list[BulletState],
+    tank: TankState,
+    intent: ControlIntent,
+    sim: SimConfig,
+    owner: str,
+    active: int,
+) -> int:
+    """满弹且冷却就绪、意图开火时挤掉最早己方弹；返回更新后的己方弹数。"""
+    if (
+        tank.alive
+        and intent.fire
+        and tank.fire_cooldown <= 0
+        and active >= sim.bullet.max_active_per_tank
+    ):
+        if pop_oldest_bullet(bullets, owner):
+            active -= 1
+    return active
 
 
 def create_initial_state(
@@ -125,6 +163,9 @@ def step_world(
 
     n_red = sum(1 for b in s.bullets if b.owner == "red")
     n_blue = sum(1 for b in s.bullets if b.owner == "blue")
+    n_red = _maybe_evict_for_fire(
+        s.bullets, red, intent_red, sim, "red", n_red
+    )
     b_red = try_fire(red, intent_red, sim, active_bullets=n_red)
     if b_red:
         b_red.id = s.next_bullet_id
@@ -132,6 +173,9 @@ def step_world(
         s.bullets.append(b_red)
         s.red_fired = True
         n_red += 1
+    n_blue = _maybe_evict_for_fire(
+        s.bullets, blue, intent_blue, sim, "blue", n_blue
+    )
     b_blue = try_fire(blue, intent_blue, sim, active_bullets=n_blue)
     if b_blue:
         b_blue.id = s.next_bullet_id

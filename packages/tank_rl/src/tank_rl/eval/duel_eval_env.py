@@ -10,7 +10,7 @@ import numpy as np
 from tank_rl.curriculum.config import CurriculumAimConfig
 from tank_rl.curriculum.scheduler import CurriculumScheduler
 from tank_rl.train.curriculum_env import make_curriculum_env
-from tank_rl.train.policy_mean import policy_deterministic_action_mean
+from tank_rl.train.policy_mean import policy_mean_and_action
 from tank_rl.vec_env.strided_stack import StridedStackEnv
 
 
@@ -53,11 +53,15 @@ def sb3_predict_fn(model, obs: np.ndarray, *, deterministic: bool = True) -> np.
 
 
 def make_eval_predict_fn(model, stack_env: StridedStackEnv):
-    """评测/观战：先记确定性均值再 ``predict``（与训练 rollout 一致）。"""
+    """评测/观战：单次前向取 deterministic mean（写入堆叠）与动作。"""
 
     def predict_fn(obs: np.ndarray, *, deterministic: bool = True) -> np.ndarray:
         if stack_env._action_dim > 0:
-            stack_env.record_action_mean(policy_deterministic_action_mean(model, obs))
+            mean, action = policy_mean_and_action(
+                model, obs, deterministic=deterministic
+            )
+            stack_env.record_action_mean(mean)
+            return np.asarray(action, dtype=np.float32)
         return sb3_predict_fn(model, obs, deterministic=deterministic)
 
     return predict_fn

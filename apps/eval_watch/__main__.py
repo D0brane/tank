@@ -379,7 +379,7 @@ def main(argv: list[str] | None = None) -> None:
         f"均值堆叠={'开' if stack_action_mean else '关'}  "
         f"确定性={args.deterministic}"
     )
-    print("  Esc 退出 | R 重开 | 1/2/3 切换阶段0/1/2（手动难度）")
+    print("  Esc 退出 | R 重开 | 1/2/3 切换阶段0/1/2 | 4 炮塔（不平移、对准即开火）")
     print(f"  自动重开 : {'开' if auto_restart else '关'}")
     print("=" * 56)
 
@@ -425,6 +425,35 @@ def main(argv: list[str] | None = None) -> None:
                             f"[切换] → {stage.name} mode={bot.mode} "
                             f"speed={bot.speed_scale:.2f}"
                         )
+                elif event.key == pygame.K_4:
+                    stage_idx, stage = _resolve_stage(
+                        load_curriculum_aim_config(
+                            "configs/train/curriculum_turret.yaml"
+                        ),
+                        "stage_turret",
+                    )
+                    bot_from_meta = False
+                    _configure_bot_for_watch(
+                        bot, stage.bot, use_anneal_end=not args.easy
+                    )
+                    scheduler.bot.configure(
+                        mode=bot.mode,
+                        speed_scale=bot.speed_scale,
+                        mean_straight_frames=bot.mean_straight_frames,
+                        turn_duration=bot.turn_duration,
+                    )
+                    env.set_reward_overrides(stage.reward)
+                    obs, _ = stack_env.reset()
+                    episode += 1
+                    hud = [
+                        f"检查结果 ep={episode} stage={stage.name}",
+                        f"bot={bot.mode} v={bot.speed_scale:.2f}",
+                    ]
+                    env.set_play_hud(True, hud)
+                    print(
+                        f"[切换] → {stage.name} mode={bot.mode} "
+                        f"speed={bot.speed_scale:.2f}"
+                    )
 
         action = predict(obs, deterministic=args.deterministic)
         obs, _reward, terminated, truncated, info = stack_env.step(action)

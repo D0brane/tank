@@ -1,0 +1,70 @@
+[续训] 新时间戳 run（自 20260922_225205）→ 20260923_092238；起点已存为 named/model_0（0号模型）
+============================================================
+瞄准课程 PPO 训练（断点续训）
+============================================================
+  配置文件     : configs/train/curriculum_aim.yaml
+  本次运行目录 : runs/curriculum_aim/20260923_092238
+  续训权重     : runs/curriculum_aim/20260923_092238/named/model_0.zip
+  已训步数     : 9,748,480 → 目标 100,000,000
+  设备         : cpu
+  总步数       : 100,000,000
+  并行环境     : 8
+  帧堆叠       : 选择性 3 步距=3 depth=7 lags=[6, 3, 0]（开火/子弹仅当前） + 确定性均值×3 → 输入维 101
+  评测间隔     : 每 100,000 步 / 100 局（单局≤600步）
+  存盘间隔     : 每 100,000 步 → runs/curriculum_aim/20260923_092238/checkpoints/
+  晋级存盘     : 每次晋级 → runs/curriculum_aim/20260923_092238/promotions/
+------------------------------------------------------------
+  当前阶段     : stage2_linear (2/3)
+  对手         : mode=linear  speed=1.00
+  奖励         : aim=0.1 mode=lead  kill=60.0  rotate=-0.07
+  转向阶梯     : phase=3/0  levels=[-0.07]  推进条件 hit_rate>1.01  末档再达标=否
+------------------------------------------------------------
+  TensorBoard  : tensorboard --logdir runs/curriculum_aim
+  浏览器打开   : http://localhost:6006
+============================================================
+[续训] 覆盖超参 learning_rate=3e-05  ent_coef=0.01→0.001（2,000,000 步衰减）  log_std∈[-5,0]  std 2.290→1.000
+[进度] 9,764,864/100,000,000 (9.8%)  FPS≈964  阶段=stage2_linear  速度=1.00  直行间隔=180  aim=0.100/lead  rotate=-0.07  ent=0.00992627  std=1.000
+[进度] 9,781,248/100,000,000 (9.8%)  FPS≈970  阶段=stage2_linear  速度=1.00  直行间隔=180  aim=0.100/lead  rotate=-0.07  ent=0.00985254  std=0.999
+[进度] 9,797,632/100,000,000 (9.8%)  FPS≈964  阶段=stage2_linear  速度=1.00  直行间隔=180  aim=0.100/lead  rotate=-0.07  ent=0.00977882  std=0.999
+[进度] 9,814,016/100,000,000 (9.8%)  FPS≈982  阶段=stage2_linear  速度=1.00  直行间隔=180  aim=0.100/lead  rotate=-0.07  ent=0.00970509  std=0.999
+[进度] 9,830,400/100,000,000 (9.8%)  FPS≈1025  阶段=stage2_linear  速度=1.00  直行间隔=180  aim=0.100/lead  rotate=-0.07  ent=0.00963136  std=1.000
+[进度] 9,846,784/100,000,000 (9.8%)  FPS≈914  阶段=stage2_linear  速度=1.00  直行间隔=180  aim=0.100/lead  rotate=-0.07  ent=0.00955763  std=0.999
+[进度] 9,863,168/100,000,000 (9.9%)  FPS≈989  阶段=stage2_linear  速度=1.00  直行间隔=180  aim=0.100/lead  rotate=-0.07  ent=0.0094839  std=0.999
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/d0brane/tank/apps/train/__main__.py", line 60, in <module>
+    main()
+  File "/home/d0brane/tank/apps/train/__main__.py", line 50, in main
+    train_curriculum_aim(
+  File "/home/d0brane/tank/packages/tank_rl/src/tank_rl/train/ppo_curriculum.py", line 441, in train_curriculum_aim
+    model.learn(
+  File "/home/d0brane/anaconda3/envs/tank/lib/python3.11/site-packages/stable_baselines3/ppo/ppo.py", line 311, in learn
+    return super().learn(
+           ^^^^^^^^^^^^^^
+  File "/home/d0brane/anaconda3/envs/tank/lib/python3.11/site-packages/stable_baselines3/common/on_policy_algorithm.py", line 324, in learn
+    continue_training = self.collect_rollouts(self.env, callback, self.rollout_buffer, n_rollout_steps=self.n_steps)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/d0brane/tank/packages/tank_rl/src/tank_rl/train/action_mean_rollout.py", line 119, in _collect_rollouts_with_action_means
+    callback.on_rollout_end()
+  File "/home/d0brane/anaconda3/envs/tank/lib/python3.11/site-packages/stable_baselines3/common/callbacks.py", line 124, in on_rollout_end
+    self._on_rollout_end()
+  File "/home/d0brane/tank/packages/tank_rl/src/tank_rl/train/ppo_curriculum.py", line 320, in _on_rollout_end
+    save_sb3_model(self.model, path)
+  File "/home/d0brane/tank/packages/tank_rl/src/tank_rl/train/action_mean_rollout.py", line 139, in save_sb3_model
+    model.save(str(path), exclude=["collect_rollouts", "_tank_action_mean_rollout"])
+  File "/home/d0brane/anaconda3/envs/tank/lib/python3.11/site-packages/stable_baselines3/common/base_class.py", line 867, in save
+    save_to_zip_file(path, data=data, params=params_to_save, pytorch_variables=pytorch_variables)
+  File "/home/d0brane/anaconda3/envs/tank/lib/python3.11/site-packages/stable_baselines3/common/save_util.py", line 316, in save_to_zip_file
+    serialized_data = data_to_json(data)
+                      ^^^^^^^^^^^^^^^^^^
+  File "/home/d0brane/anaconda3/envs/tank/lib/python3.11/site-packages/stable_baselines3/common/save_util.py", line 100, in data_to_json
+    base64_encoded = base64.b64encode(cloudpickle.dumps(data_item)).decode()
+                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/d0brane/anaconda3/envs/tank/lib/python3.11/site-packages/cloudpickle/cloudpickle.py", line 1544, in dumps
+    cp.dump(obj)
+  File "/home/d0brane/anaconda3/envs/tank/lib/python3.11/site-packages/cloudpickle/cloudpickle.py", line 1313, in dump
+    return super().dump(obj)
+           ^^^^^^^^^^^^^^^^^
+TypeError: cannot pickle '_abc._abc_data' object
+ERROR conda.cli.main_run:execute(127): `conda run python -u -m apps.train --config configs/train/curriculum_aim.yaml --resume runs/curriculum_aim/20260922_225205/named/model_best_stage2.zip --new-run --device cpu` failed. (See above for error)

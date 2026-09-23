@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from tank_rl.checkpoint_meta import (
     CurriculumCheckpointMeta,
     apply_meta_to_scheduler,
@@ -159,6 +161,47 @@ def test_apply_meta_to_scheduler():
     assert sch.stage_timesteps == 12_345
     assert sch.bot.mode == "linear"
     assert abs(sch.bot.speed_scale - 0.7) < 1e-6
+
+
+def test_advance_scheduler_from_promotion(tmp_path: Path):
+    from tank_rl.checkpoint_meta import advance_scheduler_from_promotion
+
+    cfg = load_curriculum_aim_config("configs/train/curriculum_aim.yaml")
+    sch = CurriculumScheduler(cfg)
+    apply_meta_to_scheduler(
+        sch,
+        CurriculumCheckpointMeta(
+            stage_index=0,
+            stage_name="stage1_static",
+            stage_timesteps=1000,
+            timesteps=1000,
+            bot_mode="static",
+            speed_scale=0.0,
+            mean_straight_frames=180.0,
+            turn_duration=30,
+            frame_stack=3,
+        ),
+    )
+    ckpt = tmp_path / "promo.zip"
+    ckpt.write_bytes(b"x")
+    save_promotion_sidecar(
+        ckpt,
+        metrics=EvalMetrics(
+            kill_rate=0.5, hit_rate=0.3, median_ttk=100.0, n_episodes=10
+        ),
+        completed_stage_index=0,
+        completed_stage_name="stage1_static",
+        next_stage_index=1,
+        next_stage_name="stage2_linear",
+        eval_timesteps=1000,
+    )
+    prom = advance_scheduler_from_promotion(sch, ckpt)
+    assert prom is not None
+    assert sch.stage_index == 1
+    assert sch.stage.name == "stage2_linear"
+    assert sch.stage_timesteps == 0
+    assert sch.bot.mode == "linear"
+    assert sch.bot.speed_scale == pytest.approx(0.3)
 
 
 def test_missing_meta_returns_none(tmp_path: Path):

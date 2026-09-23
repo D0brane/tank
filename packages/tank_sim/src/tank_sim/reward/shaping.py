@@ -20,6 +20,9 @@ class RewardState:
     prev_path_len_blue: float | None = None
     prev_move_red: MoveIntent = MoveIntent.STOP
     prev_move_blue: MoveIntent = MoveIntent.STOP
+    # 本局该侧是否已对敌方造成过直击（bounces==0）；一旦为真不再计 hit_before_direct
+    direct_scored_red: bool = False
+    direct_scored_blue: bool = False
 
 
 @dataclass
@@ -42,6 +45,7 @@ class RewardBreakdown:
     death: float = 0.0
     wall_proximity: float = 0.0
     enemy_proximity: float = 0.0
+    hit_before_direct: float = 0.0
 
     def as_parts_dict(self) -> dict[str, float]:
         """不含 total 的分项字典（写入 info / TB）。"""
@@ -126,6 +130,7 @@ def compute_reward_breakdown(
     parts.wall_proximity = _wall_proximity(me, curr, cfg)
     parts.enemy_proximity = _enemy_proximity(me, enemy, cfg)
     _apply_hit_scores(parts, curr, side, cfg)
+    parts.hit_before_direct = _hit_before_direct(curr, side, cfg, rstate)
 
     parts.total = (
         parts.survive_per_step
@@ -143,6 +148,7 @@ def compute_reward_breakdown(
         + parts.death
         + parts.wall_proximity
         + parts.enemy_proximity
+        + parts.hit_before_direct
     )
     return parts
 
@@ -159,6 +165,32 @@ def _apply_hit_scores(
                 parts.kill_bounce += float(cfg.kill_bounce)
             else:
                 parts.kill += float(cfg.kill)
+
+
+def _hit_before_direct(
+    curr: WorldState, side: str, cfg: RewardConfig, rstate: RewardState
+) -> float:
+    """
+    本局还没有直击敌方时，每被任意子弹击中一次扣 ``hit_before_direct``。
+
+    直击（bounces==0 打中对方）一旦发生，本局之后不再扣，含同一时刻之后的命中。
+    同一帧里若尚未直击就被击中，仍扣；本帧的直击只锁住后续帧。
+    """
+    already = rstate.direct_scored_red if side == "red" else rstate.direct_scored_blue
+    penalty = 0.0
+    if not already and cfg.hit_before_direct != 0.0:
+        n = sum(1 for ev in curr.hit_events if ev.victim == side)
+        penalty = float(cfg.hit_before_direct) * n
+    got_direct = any(
+        ev.attacker == side and ev.victim != side and ev.bounces == 0
+        for ev in curr.hit_events
+    )
+    if got_direct:
+        if side == "red":
+            rstate.direct_scored_red = True
+        else:
+            rstate.direct_scored_blue = True
+    return penalty
 
 
 def _proximity_shaping(d: float, scale: float, margin: float, power: float) -> float:
@@ -238,14 +270,48 @@ def _aim_target(
     mode: Literal["current", "lead"],
     bullet_speed: float,
 ) -> tuple[float, float]:
+    """
+    瞄准目标点。lead：解精确拦截二次方程（匀速敌 / 恒速弹），取最小正根；
+    无正根时回退到敌人现位。
+    """
     if mode != "lead" or not enemy.alive:
         return enemy.x, enemy.y
     evx = enemy.x - prev_enemy.x
     evy = enemy.y - prev_enemy.y
-    dist = math.hypot(enemy.x - me.x, enemy.y - me.y)
-    speed = max(1e-6, bullet_speed)
-    t = dist / speed
+    rx = enemy.x - me.x
+    ry = enemy.y - me.y
+    vb = max(1e-6, float(bullet_speed))
+    # |r + ve t| = vb t  →  (|ve|^2 - vb^2) t^2 + 2(r·ve) t + |r|^2 = 0
+    a = evx * evx + evy * evy - vb * vb
+    b = 2.0 * (rx * evx + ry * evy)
+    c = rx * rx + ry * ry
+    t = _smallest_positive_root(a, b, c)
+    if t is None:
+        return enemy.x, enemy.y
     return enemy.x + evx * t, enemy.y + evy * t
+
+
+def _smallest_positive_root(a: float, b: float, c: float) -> float | None:
+    """一元二次/一次方程的最小正根；无则 None。"""
+    eps = 1e-9
+    if abs(a) < eps:
+        # 退化为 bt + c = 0
+        if abs(b) < eps:
+            return None
+        t = -c / b
+        return t if t > eps else None
+    disc = b * b - 4.0 * a * c
+    if disc < 0.0:
+        return None
+    sqrt_d = math.sqrt(disc)
+    inv = 0.5 / a
+    t0 = (-b - sqrt_d) * inv
+    t1 = (-b + sqrt_d) * inv
+    best: float | None = None
+    for t in (t0, t1):
+        if t > eps and (best is None or t < best):
+            best = t
+    return best
 
 
 def _bullet_shaping_parts(

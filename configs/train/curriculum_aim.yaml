@@ -41,16 +41,22 @@ env:
   max_spawn_dist: 240.0
 
 ppo:
-  # 学习率
-  learning_rate: 3.0e-4
+  # 学习率（再降一档，抑止 std 爆炸后续训发散）
+  learning_rate: 3.0e-5
   # 每个环境每次更新收集的步数
   n_steps: 2048
   # SGD 小批量大小
   batch_size: 256
   # 折扣因子 γ
   gamma: 0.99
-  # 熵正则系数（探索）
+  # 熵正则：起点 → 终点线性衰减（探索随训减弱）
   ent_coef: 0.01
+  ent_coef_end: 0.001
+  # 自本次续训起点起，多少环境步内衰减到 ent_coef_end
+  ent_coef_decay_timesteps: 2_000_000
+  # 高斯策略 log_std 钳制（std=exp(log_std)；上限 0 → std≤1）
+  log_std_min: -5.0
+  log_std_max: 0.0
   # MLP 隐层宽度 [层1, 层2]
   net_arch: [256, 128]
 
@@ -98,8 +104,8 @@ stages:
       fire_on_cd_penalty: -0.02
       # 每步前进/后退惩罚
       move_penalty: -0.001
-      # 每步转向惩罚（瞄准阶段先 0，避免压过 aim）
-      rotate_penalty: 0.008
+      # 每步转向惩罚（由 rotate_penalty_schedule 覆盖；此处为文档默认）
+      rotate_penalty: -0.09
       # 前进↔后退切换惩罚（抑止原地抽搐）
       move_switch_penalty: -0.02
       # 贴边/贴墙高次惩罚（外框墙）
@@ -107,15 +113,15 @@ stages:
       wall_proximity_margin: 50.0
       wall_proximity_power: 4.0
       # 贴敌高次惩罚：仅很近才大罚
-      enemy_proximity_scale: -0.4
-      enemy_proximity_margin: 100.0
+      enemy_proximity_scale: -0.8
+      enemy_proximity_margin: 150.0
       enemy_proximity_power: 4.0
       # 击杀稀疏奖（直击）
-      kill: 100.0
+      kill: 60.0
       # 己弹反弹后再击杀
       kill_bounce: 0.0
       # 被击杀惩罚
-      death: -80.0
+      death: -40.0
     promote:
       # 晋级指标：hit_rate=直击次数/开火；kill_rate=命中次数/开火（含反弹）
       metric: hit_rate
@@ -148,17 +154,17 @@ stages:
       fire_penalty: -1
       fire_on_cd_penalty: -0.02
       move_penalty: -0.001
-      rotate_penalty: 0.008
+      rotate_penalty: -0.07
       move_switch_penalty: -0.02
       wall_proximity_scale: -0.4
       wall_proximity_margin: 50.0
       wall_proximity_power: 4.0
-      enemy_proximity_scale: -0.4
-      enemy_proximity_margin: 100.0
+      enemy_proximity_scale: -0.8
+      enemy_proximity_margin: 150.0
       enemy_proximity_power: 4.0
-      kill: 100.0
+      kill: 60.0
       kill_bounce: 0.0
-      death: -80.0
+      death: -40.0
     promote:
       metric: hit_rate
       threshold: 0.06
@@ -191,18 +197,27 @@ stages:
       fire_penalty: -1
       fire_on_cd_penalty: -0.02
       move_penalty: -0.001
-      rotate_penalty: 0.008
+      rotate_penalty: -0.07
       move_switch_penalty: -0.02
       wall_proximity_scale: -0.4
       wall_proximity_margin: 50.0
       wall_proximity_power: 4.0
       enemy_proximity_scale: -0.4
-      enemy_proximity_margin: 100.0
+      enemy_proximity_margin: 150.0
       enemy_proximity_power: 4.0
-      kill: 100.0
+      kill: 60.0
       kill_bounce: 0.0
-      death: -80.0
+      death: -40.0
     promote:
       metric: hit_rate
       threshold: 0.05
       require_mean_straight_frames: 60.0
+
+# 锁定转向惩罚；schedule 开启仅用于禁止晋级下一阶段（现锁 stage2，不进 stage3）
+# 档位固定 -0.07；threshold 不可达 → 永不 advance/stop
+rotate_penalty_schedule:
+  enabled: true
+  threshold: 1.01
+  compare: gt
+  stop_after_last: false
+  levels: [-0.07]

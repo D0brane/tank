@@ -118,7 +118,10 @@ def try_fire(
     sim: SimConfig,
     active_bullets: int = 0,
 ) -> BulletState | None:
-    """若允许则生成新子弹（冷却 + 同时在场上限）。"""
+    """若允许则生成新子弹（冷却 + 同时在场上限）。
+
+    满弹时由 ``step_world`` 先 FIFO 挤掉最早己方弹再调用本函数。
+    """
     if not tank.alive or not intent.fire:
         return None
     if tank.fire_cooldown > 0:

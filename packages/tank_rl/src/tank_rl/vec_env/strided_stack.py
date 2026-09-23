@@ -181,6 +181,94 @@ class StridedStackEnv:
         self.env.close()
 
 
+class VecStridedFrameStackWrapper(VecEnvWrapper):
+    """SB3 VecEnv 稀疏/选择性堆叠（模块级类，便于 pickle）。"""
+
+    def __init__(
+        self,
+        venv,
+        n_stack: int,
+        stride: int,
+        *,
+        action_dim: int = 0,
+        observation_space: gym.Space,
+        frame_dim: int,
+        selective: bool,
+    ) -> None:
+        super().__init__(venv, observation_space=observation_space)
+        self._n_stack = max(1, int(n_stack))
+        self._stride = max(1, int(stride))
+        self._action_dim = max(0, int(action_dim))
+        self._frame_dim = int(frame_dim)
+        self._selective = bool(selective)
+        self.buffers = [
+            StridedFrameBuffer(
+                self._n_stack, self._stride, self._frame_dim, selective=self._selective
+            )
+            for _ in range(self.num_envs)
+        ]
+        self.mean_buffers: list[StridedFrameBuffer] | None = None
+        if self._action_dim > 0:
+            self.mean_buffers = [
+                StridedFrameBuffer(
+                    self._n_stack, self._stride, self._action_dim, selective=False
+                )
+                for _ in range(self.num_envs)
+            ]
+        self._pending_means = np.zeros(
+            (self.num_envs, self._action_dim), dtype=np.float32
+        )
+
+    def record_action_means(self, means: np.ndarray) -> None:
+        m = np.asarray(means, dtype=np.float32).reshape(self.num_envs, self._action_dim)
+        self._pending_means = m
+
+    def reset(self) -> np.ndarray:
+        obs = self.venv.reset()
+        for i, o in enumerate(obs):
+            self.buffers[i].reset(np.asarray(o))
+            if self.mean_buffers is not None:
+                self.mean_buffers[i].reset(
+                    np.zeros(self._action_dim, dtype=np.float32)
+                )
+        self._pending_means = np.zeros(
+            (self.num_envs, self._action_dim), dtype=np.float32
+        )
+        return self._stacked_obs()
+
+    def step_wait(self) -> tuple:
+        obs, rewards, dones, infos = self.venv.step_wait()
+        for i, o in enumerate(obs):
+            oa = np.asarray(o)
+            if self.mean_buffers is not None:
+                self.mean_buffers[i].append(self._pending_means[i])
+            if dones[i]:
+                if "terminal_observation" in infos[i]:
+                    term = np.asarray(infos[i]["terminal_observation"], dtype=np.float32)
+                    self.buffers[i].append(term.reshape(-1))
+                    infos[i]["terminal_observation"] = self._compose(i).copy()
+                self.buffers[i].reset(oa)
+                if self.mean_buffers is not None:
+                    self.mean_buffers[i].reset(
+                        np.zeros(self._action_dim, dtype=np.float32)
+                    )
+            else:
+                self.buffers[i].append(oa)
+        self._pending_means = np.zeros(
+            (self.num_envs, self._action_dim), dtype=np.float32
+        )
+        return self._stacked_obs(), rewards, dones, infos
+
+    def _compose(self, i: int) -> np.ndarray:
+        frames = self.buffers[i].stacked()
+        if self.mean_buffers is None:
+            return frames
+        return np.concatenate([frames, self.mean_buffers[i].stacked()], axis=-1)
+
+    def _stacked_obs(self) -> np.ndarray:
+        return np.stack([self._compose(i) for i in range(self.num_envs)], axis=0)
+
+
 def VecStridedFrameStack(
     venv,
     n_stack: int,
@@ -211,75 +299,12 @@ def VecStridedFrameStack(
         low = np.concatenate([low, act_low])
         high = np.concatenate([high, act_high])
     obs_space = gym.spaces.Box(low=low, high=high, dtype=venv.observation_space.dtype)
-
-    class _Wrapper(VecEnvWrapper):
-        def __init__(self, venv_inner) -> None:
-            super().__init__(venv_inner, observation_space=obs_space)
-            self._action_dim = adim  # 供 bind_action_mean_rollout 检测
-            self.buffers = [
-                StridedFrameBuffer(n_stack, stride, frame_dim, selective=selective)
-                for _ in range(self.num_envs)
-            ]
-            self.mean_buffers: list[StridedFrameBuffer] | None = None
-            if self._action_dim > 0:
-                self.mean_buffers = [
-                    StridedFrameBuffer(
-                        n_stack, stride, self._action_dim, selective=False
-                    )
-                    for _ in range(self.num_envs)
-                ]
-            self._pending_means = np.zeros(
-                (self.num_envs, self._action_dim), dtype=np.float32
-            )
-
-        def record_action_means(self, means: np.ndarray) -> None:
-            m = np.asarray(means, dtype=np.float32).reshape(self.num_envs, self._action_dim)
-            self._pending_means = m
-
-        def reset(self) -> np.ndarray:
-            obs = self.venv.reset()
-            for i, o in enumerate(obs):
-                self.buffers[i].reset(np.asarray(o))
-                if self.mean_buffers is not None:
-                    self.mean_buffers[i].reset(
-                        np.zeros(self._action_dim, dtype=np.float32)
-                    )
-            self._pending_means = np.zeros(
-                (self.num_envs, self._action_dim), dtype=np.float32
-            )
-            return self._stacked_obs()
-
-        def step_wait(self) -> tuple:
-            obs, rewards, dones, infos = self.venv.step_wait()
-            for i, o in enumerate(obs):
-                oa = np.asarray(o)
-                if self.mean_buffers is not None:
-                    self.mean_buffers[i].append(self._pending_means[i])
-                if dones[i]:
-                    # SB3 用 terminal_observation 做 bootstrap；须为堆叠后维数
-                    if "terminal_observation" in infos[i]:
-                        term = np.asarray(infos[i]["terminal_observation"], dtype=np.float32)
-                        self.buffers[i].append(term.reshape(-1))
-                        infos[i]["terminal_observation"] = self._compose(i).copy()
-                    self.buffers[i].reset(oa)
-                    if self.mean_buffers is not None:
-                        self.mean_buffers[i].reset(
-                            np.zeros(self._action_dim, dtype=np.float32)
-                        )
-                else:
-                    self.buffers[i].append(oa)
-            self._pending_means = np.zeros(
-                (self.num_envs, self._action_dim), dtype=np.float32
-            )
-            return self._stacked_obs(), rewards, dones, infos
-
-        def _compose(self, i: int) -> np.ndarray:
-            frames = self.buffers[i].stacked()
-            if self.mean_buffers is None:
-                return frames
-            return np.concatenate([frames, self.mean_buffers[i].stacked()], axis=-1)
-
-        def _stacked_obs(self) -> np.ndarray:
-            return np.stack([self._compose(i) for i in range(self.num_envs)], axis=0)
-
-    return _Wrapper(venv)
+    return VecStridedFrameStackWrapper(
+        venv,
+        n_stack,
+        stride,
+        action_dim=adim,
+        observation_space=obs_space,
+        frame_dim=frame_dim,
+        selective=selective,
+    )

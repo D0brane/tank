@@ -20,7 +20,7 @@ class PromoteConfig:
 
 @dataclass
 class StageBotConfig:
-    mode: Literal["static", "linear", "turn_cruise"]
+    mode: Literal["static", "linear", "turn_cruise", "turret"]
     speed_scale: float = 1.0
     speed_scale_end: float | None = None
     mean_straight_frames: float = 180.0
@@ -58,6 +58,17 @@ class ArenaConfig:
 
 
 @dataclass
+class RotatePenaltySchedule:
+    """按评测 hit_rate 阶梯下调转向惩罚；最后一档再达标则停训。"""
+
+    levels: list[float]
+    threshold: float = 0.3
+    # True: hit_rate > threshold；False: hit_rate >= threshold
+    strict_gt: bool = True
+    stop_after_last: bool = True
+
+
+@dataclass
 class CurriculumAimConfig:
     seed: int
     total_timesteps: int
@@ -78,6 +89,7 @@ class CurriculumAimConfig:
     checkpoint_every_timesteps: int
     stages: list[StageConfig] = field(default_factory=list)
     arena: ArenaConfig = field(default_factory=ArenaConfig)
+    rotate_penalty_schedule: RotatePenaltySchedule | None = None
 
 
 def load_curriculum_aim_config(path: str | Path) -> CurriculumAimConfig:
@@ -151,6 +163,27 @@ def load_curriculum_aim_config(path: str | Path) -> CurriculumAimConfig:
         checkpoint_every_timesteps=int(ck.get("every_timesteps", 100_000)),
         stages=stages,
         arena=_load_arena(raw.get("arena")),
+        rotate_penalty_schedule=_load_rotate_schedule(raw.get("rotate_penalty_schedule")),
+    )
+
+
+def _load_rotate_schedule(raw: Any) -> RotatePenaltySchedule | None:
+    if not isinstance(raw, dict):
+        return None
+    if raw.get("enabled", True) is False:
+        return None
+    levels_raw = raw.get("levels")
+    if not levels_raw:
+        return None
+    levels = [float(x) for x in levels_raw]
+    if not levels:
+        return None
+    compare = str(raw.get("compare", "gt")).lower()
+    return RotatePenaltySchedule(
+        levels=levels,
+        threshold=float(raw.get("threshold", 0.3)),
+        strict_gt=compare != "ge",
+        stop_after_last=bool(raw.get("stop_after_last", True)),
     )
 
 

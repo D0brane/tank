@@ -8,7 +8,7 @@
 
 ## 三阶段
 
-1. **stage1_static** — 空场固定靶；`aim_mode=current`；晋级 `hit_rate（直击次数/己方开火）≥ 0.10`
+1. **stage1_static** — 空场固定靶；`aim_mode=current`；晋级 `hit_rate（直击次数/己方开火）≥ 0.10` 且中位 TTK ≤ 900
 2. **stage2_linear** — 直线靶，速度 0.3→1.0 退火；`aim_mode=lead`；晋级 `hit_rate ≥ 0.06`（满速后）
 3. **stage3_turn_cruise** — 直行+偶发转弯，间隔 240→60；晋级 `hit_rate ≥ 0.05`（直行间隔退火到位）
 

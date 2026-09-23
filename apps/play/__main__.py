@@ -29,6 +29,8 @@ def _print_help(mode: str, layout: str, side: str, opponent: str, gen_maze: bool
             print(f"你控制{who}: WASD, Space 开火")
         if opponent == "none":
             print("对手: 静止靶")
+        elif opponent == "policy":
+            print("对手: 训练权重（你用键盘，对方用模型）")
         else:
             print("对手: 保守规则 Bot")
 
@@ -67,14 +69,33 @@ def _build_env(args, duel: bool):
         print("---")
 
     if duel:
+        open_arena = None
+        random_spawn = False
+        min_spawn = 120.0
+        max_spawn = 240.0
+        if args.open_arena:
+            open_arena = {
+                "mode": "random_open",
+                "cols_min": 8,
+                "cols_max": 12,
+                "rows_min": 4,
+                "rows_max": 6,
+            }
+            random_spawn = True
+            map_path = None
+            game_map = None
         return DuelEnv(
             config_path=args.config,
             map_path=map_path,
             game_map=game_map,
             agent_side=args.side,
-            opponent=args.opponent,
+            opponent=args.opponent_obj if args.opponent_obj is not None else args.opponent,
             render_mode="human",
             render_style=args.render_style,
+            random_spawn=random_spawn,
+            min_spawn_dist=min_spawn,
+            max_spawn_dist=max_spawn,
+            open_arena=open_arena,
         )
     return BattleEnv(
         config_path=args.config,
@@ -94,10 +115,21 @@ def _reset_env(env, args, *, new_maze: bool = False) -> None:
 
         print(f"--- 新迷宫 seed={seed} ---")
         print(maze_to_ascii(env.state.game_map))
+        _reset_policy_opponent(args)
         return obs
     if args.gen_maze:
-        return env.reset(options={"game_map": env.state.game_map})[0]
-    return env.reset()[0]
+        obs = env.reset(options={"game_map": env.state.game_map})[0]
+        _reset_policy_opponent(args)
+        return obs
+    obs = env.reset()[0]
+    _reset_policy_opponent(args)
+    return obs
+
+
+def _reset_policy_opponent(args) -> None:
+    opp = getattr(args, "opponent_obj", None)
+    if opp is not None and hasattr(opp, "reset"):
+        opp.reset()
 
 
 def _run_duel(args) -> None:
@@ -241,7 +273,17 @@ def main() -> None:
     parser.add_argument("--config", type=str, default="configs/env/sim_p0_tt2_classic.yaml")
     parser.add_argument("--mode", choices=("duel", "pvp"), default="duel")
     parser.add_argument("--side", choices=("red", "blue"), default="red")
-    parser.add_argument("--opponent", choices=("none", "rule"), default="none")
+    parser.add_argument("--opponent", choices=("none", "rule", "policy"), default="none")
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="对手为训练权重时的 .zip（--opponent policy）",
+    )
+    parser.add_argument(
+        "--open-arena",
+        action="store_true",
+        help="每局随机空场（与瞄准课程相同尺寸）",
+    )
     parser.add_argument("--layout", choices=("tt2", "wasd"), default="wasd")
     parser.add_argument("--fps", type=int, default=60)
     parser.add_argument("--hud", action="store_true")
@@ -274,6 +316,31 @@ def main() -> None:
         sys.exit(1)
 
     pygame.init()
+    args.opponent_obj = None
+    if args.model:
+        if args.config == "configs/env/sim_p0_tt2_classic.yaml":
+            args.config = "configs/env/sim_p0_tt2_aim_open.yaml"
+        args.opponent = "policy"
+        from tank_rl.checkpoint_meta import load_curriculum_meta
+        from tank_rl.inference.policy_opponent import StackedPolicyOpponent
+
+        meta = load_curriculum_meta(args.model)
+        frame_stack = int(meta.frame_stack) if meta is not None else 3
+        frame_stride = int(getattr(meta, "frame_stride", 3) or 3) if meta is not None else 3
+        stack_mean = bool(getattr(meta, "stack_action_mean", True)) if meta is not None else True
+        args.opponent_obj = StackedPolicyOpponent(
+            args.model,
+            frame_stack=frame_stack,
+            frame_stride=frame_stride,
+            stack_action_mean=stack_mean,
+            device="cpu",
+        )
+        if not args.open_arena:
+            args.open_arena = True
+        print(
+            f"[对手] 权重 {args.model}  "
+            f"stack={frame_stack} stride={frame_stride} mean={stack_mean}"
+        )
     if args.mode == "pvp":
         _run_pvp(args)
     else:

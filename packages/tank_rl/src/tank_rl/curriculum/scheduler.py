@@ -1,8 +1,9 @@
-"""课程阶段调度：退火对手参数 + 按评测指标晋级。"""
+"""课程阶段调度：退火对手参数 + 按评测指标晋级 + 转向惩罚阶梯。"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any, Literal
 
 from tank_sim.bots.curriculum_bot import CurriculumBot
 from tank_sim.envs.duel_env import DuelEnv
@@ -16,6 +17,13 @@ class EvalMetrics:
     hit_rate: float
     median_ttk: float | None
     n_episodes: int
+    # 被击中次数 / 敌方开火数
+    hit_taken_rate: float = 0.0
+    # 直击敌方发生前（含同一帧）从未被击中的局数 / 局数
+    preemptive_rate: float = 0.0
+
+
+RotateAdvanceResult = Literal["none", "advanced", "stop"]
 
 
 class CurriculumScheduler:
@@ -27,6 +35,7 @@ class CurriculumScheduler:
         self.cfg = cfg
         self.stage_index = 0
         self.stage_timesteps = 0
+        self.rotate_phase = 0
         self.bot = CurriculumBot(mode=cfg.stages[0].bot.mode)
         self._apply_stage_bot(cfg.stages[0], progress=0.0)
 
@@ -38,11 +47,26 @@ class CurriculumScheduler:
     def finished(self) -> bool:
         return self.stage_index >= len(self.cfg.stages)
 
+    @property
+    def rotate_penalty(self) -> float:
+        sch = self.cfg.rotate_penalty_schedule
+        if sch is None:
+            return float(self.stage.reward.get("rotate_penalty", 0.0))
+        i = int(np_clip_phase(self.rotate_phase, len(sch.levels)))
+        return float(sch.levels[i])
+
+    def current_reward(self) -> dict[str, Any]:
+        """当前阶段奖励；若启用转向阶梯则覆盖 rotate_penalty。"""
+        reward = dict(self.stage.reward)
+        if self.cfg.rotate_penalty_schedule is not None:
+            reward["rotate_penalty"] = self.rotate_penalty
+        return reward
+
     def attach_env(self, env: DuelEnv) -> None:
         """把当前阶段奖励与 Bot 应用到单个 DuelEnv。"""
         env._curriculum_bot = self.bot
         env._opponent = "curriculum"
-        env.set_reward_overrides(self.stage.reward)
+        env.set_reward_overrides(self.current_reward())
         env.random_spawn = self.cfg.random_spawn
         env.min_spawn_dist = self.cfg.min_spawn_dist
         env.max_spawn_dist = self.cfg.max_spawn_dist
@@ -54,7 +78,10 @@ class CurriculumScheduler:
         self._apply_stage_bot(self.stage, progress)
 
     def maybe_promote(self, metrics: EvalMetrics) -> bool:
-        """若达标则晋级；已是最后一阶段则返回 False。"""
+        """若达标则晋级；转向阶梯未完成前不晋级阶段。"""
+        if self.cfg.rotate_penalty_schedule is not None:
+            # 阶梯进行中：只调转向，不进 stage2
+            return False
         if self.stage_index >= len(self.cfg.stages) - 1:
             return False
         if not self._passed(self.stage, metrics):
@@ -63,6 +90,27 @@ class CurriculumScheduler:
         self.stage_timesteps = 0
         self._apply_stage_bot(self.stage, progress=0.0)
         return True
+
+    def maybe_advance_rotate(self, metrics: EvalMetrics) -> RotateAdvanceResult:
+        """
+        评测 hit_rate 达标则下调一档转向惩罚；已在最后一档再达标则请求停训。
+
+        每次评测最多推进一档。
+        """
+        sch = self.cfg.rotate_penalty_schedule
+        if sch is None:
+            return "none"
+        hit = float(metrics.hit_rate)
+        ok = hit > sch.threshold if sch.strict_gt else hit >= sch.threshold
+        if not ok:
+            return "none"
+        last = len(sch.levels) - 1
+        if self.rotate_phase < last:
+            self.rotate_phase += 1
+            return "advanced"
+        if sch.stop_after_last:
+            return "stop"
+        return "none"
 
     def _passed(self, stage: StageConfig, metrics: EvalMetrics) -> bool:
         pr = stage.promote
@@ -127,3 +175,9 @@ class CurriculumScheduler:
     @staticmethod
     def _lerp(a: float, b: float, t: float) -> float:
         return a + (b - a) * t
+
+
+def np_clip_phase(phase: int, n_levels: int) -> int:
+    if n_levels <= 0:
+        return 0
+    return max(0, min(int(phase), n_levels - 1))

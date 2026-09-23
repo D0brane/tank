@@ -104,6 +104,8 @@ class RewardConfig:
     enemy_proximity_scale: float = 0.0
     enemy_proximity_margin: float = 100.0
     enemy_proximity_power: float = 4.0
+    # 本局尚未直击敌方时，每被任意子弹击中一次的额外惩罚；0 关闭
+    hit_before_direct: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -229,6 +231,7 @@ def load_env_config(path: str | Path) -> EnvConfig:
             enemy_proximity_power=float(
                 raw["reward"].get("enemy_proximity_power", 4.0)
             ),
+            hit_before_direct=float(raw["reward"].get("hit_before_direct", 0.0)),
         ),
     )
 

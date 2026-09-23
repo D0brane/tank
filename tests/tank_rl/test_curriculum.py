@@ -44,6 +44,71 @@ def test_curriculum_bot_linear_moves():
     ) > 5.0
 
 
+def test_curriculum_bot_drive_toward_rotate_sign():
+    """航向误差为正时应发 LEFT（w<0），与 world 的 theta+= 一致。"""
+    cfg = load_env_config(default_config_path())
+    state = create_initial_state(cfg, "assets/maps/empty.txt")
+    bot = CurriculumBot(mode="linear", speed_scale=1.0, seed=0)
+    bot.reset(seed=0)
+    blue = state.tanks[1]
+    blue.theta = 0.0
+    bot._desired_theta = 1.0  # diff≈+1 → 需增大 theta
+    act = bot._drive_toward(blue, bot._desired_theta, turn_priority=True)
+    assert act[1] < -0.5
+    assert abs(act[0]) < 0.2
+
+
+def test_curriculum_bot_boundary_bounce_reflects_wall_normal():
+    """贴边按墙法线反射；同轴上升沿只触发一次；离墙航向不翻。"""
+    cfg = load_env_config(default_config_path())
+    state = create_initial_state(cfg, "assets/maps/empty.txt")
+    bot = CurriculumBot(mode="linear", speed_scale=1.0, seed=0)
+    bot.reset(seed=0)
+    blue = state.tanks[1]
+    mid_y = state.game_map.rows * state.game_map.cell_px * 0.5
+    mid_x = state.game_map.cols * state.game_map.cell_px * 0.5
+
+    # 左边 + 朝左 → θ → π − θ
+    blue.x = 10.0
+    blue.y = mid_y
+    bot._desired_theta = math.pi
+    bot._was_near_x = False
+    bot._was_near_y = False
+    bot._maybe_bounce_at_boundary(blue, state)
+    assert bot._desired_theta == pytest.approx(0.0)
+    bot._maybe_bounce_at_boundary(blue, state)
+    assert bot._desired_theta == pytest.approx(0.0)
+
+    # 底边 + 朝下 → θ → −θ
+    blue.x = mid_x
+    blue.y = 10.0
+    bot._desired_theta = -math.pi / 2
+    bot._was_near_x = False
+    bot._was_near_y = False
+    bot._maybe_bounce_at_boundary(blue, state)
+    assert bot._desired_theta == pytest.approx(math.pi / 2)
+
+    # 左边但朝右（离墙）→ 不反射
+    blue.x = 10.0
+    blue.y = mid_y
+    bot._desired_theta = 0.0
+    bot._was_near_x = False
+    bot._was_near_y = False
+    bot._maybe_bounce_at_boundary(blue, state)
+    assert bot._desired_theta == pytest.approx(0.0)
+
+    # 左下角 + 朝左下 → 两轴都反射，应朝右上
+    blue.x = 10.0
+    blue.y = 10.0
+    bot._desired_theta = -3.0 * math.pi / 4
+    bot._was_near_x = False
+    bot._was_near_y = False
+    bot._maybe_bounce_at_boundary(blue, state)
+    assert bot._desired_theta == pytest.approx(math.pi / 4)
+    assert math.cos(bot._desired_theta) > 0
+    assert math.sin(bot._desired_theta) > 0
+
+
 def test_sample_dual_spawn_distance():
     cfg = load_env_config(default_config_path())
     state = create_initial_state(cfg, "assets/maps/empty.txt")
@@ -169,17 +234,75 @@ def test_curriculum_yaml_and_promote():
     assert len(cfg.stages) == 3
     assert cfg.stages[0].bot.mode == "static"
     assert cfg.stages[1].reward["aim_mode"] == "lead"
+    # 晋级测试不受转向阶梯影响
+    cfg.rotate_penalty_schedule = None
     sch = CurriculumScheduler(cfg)
     assert sch.stage.name == "stage1_static"
-    # 未达标
+    # 未达标（直击率不足）
     assert not sch.maybe_promote(
         EvalMetrics(kill_rate=0.1, hit_rate=0.09, median_ttk=100.0, n_episodes=10)
     )
-    # 达标晋级（子弹比率口径）
+    # 未达标（TTK 超限）
+    assert not sch.maybe_promote(
+        EvalMetrics(kill_rate=0.5, hit_rate=0.15, median_ttk=901.0, n_episodes=10)
+    )
+    # 达标晋级（直击率 + 中位 TTK）
     assert sch.maybe_promote(
-        EvalMetrics(kill_rate=0.2, hit_rate=0.12, median_ttk=200.0, n_episodes=10)
+        EvalMetrics(kill_rate=0.5, hit_rate=0.10, median_ttk=900.0, n_episodes=10)
     )
     assert sch.stage.name == "stage2_linear"
+
+
+def test_rotate_penalty_schedule_advance_and_stop():
+    from tank_rl.curriculum.config import RotatePenaltySchedule
+
+    cfg = load_curriculum_aim_config("configs/train/curriculum_aim.yaml")
+    # 固定一套阶梯测推进逻辑（与当前「锁死 -0.002」yaml 解耦）
+    cfg.rotate_penalty_schedule = RotatePenaltySchedule(
+        levels=[0.004, 0.002, 0.0, -0.001],
+        threshold=0.3,
+        strict_gt=True,
+        stop_after_last=True,
+    )
+    sch = CurriculumScheduler(cfg)
+    assert sch.rotate_penalty == pytest.approx(0.004)
+    assert (
+        sch.maybe_advance_rotate(
+            EvalMetrics(kill_rate=0.2, hit_rate=0.3, median_ttk=100.0, n_episodes=10)
+        )
+        == "none"
+    )
+    assert sch.rotate_phase == 0
+    assert (
+        sch.maybe_advance_rotate(
+            EvalMetrics(kill_rate=0.4, hit_rate=0.31, median_ttk=100.0, n_episodes=10)
+        )
+        == "advanced"
+    )
+    assert sch.rotate_penalty == pytest.approx(0.002)
+    assert (
+        sch.maybe_advance_rotate(
+            EvalMetrics(kill_rate=0.4, hit_rate=0.35, median_ttk=100.0, n_episodes=10)
+        )
+        == "advanced"
+    )
+    assert sch.rotate_penalty == pytest.approx(0.0)
+    assert (
+        sch.maybe_advance_rotate(
+            EvalMetrics(kill_rate=0.4, hit_rate=0.40, median_ttk=100.0, n_episodes=10)
+        )
+        == "advanced"
+    )
+    assert sch.rotate_penalty == pytest.approx(-0.001)
+    assert (
+        sch.maybe_advance_rotate(
+            EvalMetrics(kill_rate=0.4, hit_rate=0.40, median_ttk=100.0, n_episodes=10)
+        )
+        == "stop"
+    )
+    assert not sch.maybe_promote(
+        EvalMetrics(kill_rate=0.9, hit_rate=0.9, median_ttk=10.0, n_episodes=10)
+    )
 
 
 def test_scheduler_anneal_speed():

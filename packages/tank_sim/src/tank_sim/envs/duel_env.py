@@ -111,6 +111,10 @@ class DuelEnv(gym.Env):
         self._episode_bullets_fired = 0
         self._episode_hits_on_enemy = 0
         self._episode_direct_hits_on_enemy = 0
+        self._episode_hits_on_self = 0
+        self._episode_enemy_bullets = 0
+        self._hit_before_direct = False
+        self._preemptive = False
 
     @property
     def state(self):
@@ -210,6 +214,10 @@ class DuelEnv(gym.Env):
         self._episode_bullets_fired = 0
         self._episode_hits_on_enemy = 0
         self._episode_direct_hits_on_enemy = 0
+        self._episode_hits_on_self = 0
+        self._episode_enemy_bullets = 0
+        self._hit_before_direct = False
+        self._preemptive = False
         if self._curriculum_bot is not None:
             self._curriculum_bot.reset(seed=None if seed is None else int(seed) + 17)
         return self._agent_obs(), {"step": 0}
@@ -238,14 +246,12 @@ class DuelEnv(gym.Env):
         if self.agent_side == "blue" and self._state.blue_fired:
             self._episode_fired = True
             self._episode_bullets_fired += 1
-        for ev in self._state.hit_events:
-            if ev.attacker != self.agent_side or ev.victim == self.agent_side:
-                continue
-            self._episode_hit_enemy = True
-            self._episode_hits_on_enemy += 1
-            if ev.bounces == 0:
-                self._episode_direct_hit_enemy = True
-                self._episode_direct_hits_on_enemy += 1
+        opp = "blue" if self.agent_side == "red" else "red"
+        if (opp == "red" and self._state.red_fired) or (
+            opp == "blue" and self._state.blue_fired
+        ):
+            self._episode_enemy_bullets += 1
+        _note_hit_race(self, self._state.hit_events)
         self._episode_near_hit = self._episode_near_hit or _own_bullet_near_enemy(
             self._state, self.agent_side
         )
@@ -276,6 +282,10 @@ class DuelEnv(gym.Env):
             "bullets_fired": self._episode_bullets_fired,
             "hits_on_enemy": self._episode_hits_on_enemy,
             "direct_hits_on_enemy": self._episode_direct_hits_on_enemy,
+            "hits_on_self": self._episode_hits_on_self,
+            "enemy_bullets_fired": self._episode_enemy_bullets,
+            "was_hit": self._episode_hits_on_self > 0,
+            "preemptive": self._preemptive,
             "near_hit": self._episode_near_hit,
             "kill_bullet_bounces": self._state.kill_bullet_bounces,
             "kill_bullet_owner": self._state.kill_bullet_owner,
@@ -338,6 +348,34 @@ def _other_side(side: str) -> str:
     return "blue" if side == "red" else "red"
 
 
+def _note_hit_race(env: DuelEnv, hit_events) -> None:
+    """更新本局被击中计数，以及是否在被击中前先直击敌方。"""
+    side = env.agent_side
+    victim_n = 0
+    direct_n = 0
+    any_hit_enemy = False
+    for ev in hit_events:
+        if ev.victim == side:
+            victim_n += 1
+        if ev.attacker == side and ev.victim != side:
+            any_hit_enemy = True
+            if ev.bounces == 0:
+                direct_n += 1
+    if victim_n and not env._episode_direct_hit_enemy:
+        env._hit_before_direct = True
+    env._episode_hits_on_self += victim_n
+    if any_hit_enemy:
+        env._episode_hit_enemy = True
+        env._episode_hits_on_enemy += sum(
+            1 for ev in hit_events if ev.attacker == side and ev.victim != side
+        )
+    if direct_n and not env._episode_direct_hit_enemy:
+        env._preemptive = not env._hit_before_direct
+        env._episode_direct_hit_enemy = True
+    if direct_n:
+        env._episode_direct_hits_on_enemy += direct_n
+
+
 def _merge_reward(base: RewardConfig, overrides: dict[str, Any]) -> RewardConfig:
     data = {
         "kill": base.kill,
@@ -363,6 +401,7 @@ def _merge_reward(base: RewardConfig, overrides: dict[str, Any]) -> RewardConfig
         "enemy_proximity_scale": base.enemy_proximity_scale,
         "enemy_proximity_margin": base.enemy_proximity_margin,
         "enemy_proximity_power": base.enemy_proximity_power,
+        "hit_before_direct": base.hit_before_direct,
     }
     data.update({k: overrides[k] for k in data if k in overrides})
     return RewardConfig(**data)

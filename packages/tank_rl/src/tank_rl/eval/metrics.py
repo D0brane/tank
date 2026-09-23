@@ -45,6 +45,9 @@ def evaluate_duel_policy(
     total_bullets = 0
     total_hits = 0
     total_direct = 0
+    total_hits_on_self = 0
+    total_enemy_bullets = 0
+    n_preemptive = 0
     ttks: list[float] = []
     for ep in range(n_episodes):
         obs, _ = env.reset()
@@ -62,15 +65,23 @@ def evaluate_duel_policy(
         total_bullets += int(info.get("bullets_fired", 0))
         total_hits += int(info.get("hits_on_enemy", 0))
         total_direct += int(info.get("direct_hits_on_enemy", 0))
+        total_hits_on_self += int(info.get("hits_on_self", 0))
+        total_enemy_bullets += int(info.get("enemy_bullets_fired", 0))
+        if info.get("preemptive"):
+            n_preemptive += 1
         if progress_every > 0 and (ep + 1) % progress_every == 0:
             k, h = aggregate_bullet_rates(
                 bullets_fired=total_bullets,
                 hits_on_enemy=total_hits,
                 direct_hits_on_enemy=total_direct,
             )
+            taken = _rate(total_hits_on_self, total_enemy_bullets)
+            pre = n_preemptive / float(ep + 1)
             print(
                 f"  [评测进度] {ep + 1}/{n_episodes}  "
                 f"kill(命中/开火)={k:.3f}  direct(直击/开火)={h:.3f}  "
+                f"被命中(挨打/敌开火)={taken:.3f}  "
+                f"先发制人(直击前未被打中的局)={pre:.3f}  "
                 f"弹数={total_bullets}"
             )
 
@@ -85,4 +96,12 @@ def evaluate_duel_policy(
         hit_rate=hit_rate,
         median_ttk=median_ttk,
         n_episodes=n_episodes,
+        hit_taken_rate=_rate(total_hits_on_self, total_enemy_bullets),
+        preemptive_rate=(n_preemptive / float(n_episodes)) if n_episodes else 0.0,
     )
+
+
+def _rate(num: int, den: int) -> float:
+    if den <= 0:
+        return 0.0
+    return float(num) / float(den)

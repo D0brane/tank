@@ -1,0 +1,76 @@
+# 炮塔靶课程：空场；对手不平移，转向对准后冷却一好就开火
+# 从 stage2 最佳权重热启动。观测与 curriculum_aim 相同（101 维）
+seed: 42
+total_timesteps: 100_000_000
+env_config: configs/env/sim_p0_tt2_aim_open.yaml
+map_path: assets/maps/empty.txt
+
+arena:
+  mode: random_open
+  cols: [8, 12]
+  rows: [4, 6]
+
+env:
+  n_envs: 8
+  frame_stack: 3
+  frame_stride: 3
+  stack_action_mean: true
+  agent_side: red
+  random_spawn: true
+  min_spawn_dist: 120.0
+  max_spawn_dist: 240.0
+
+ppo:
+  learning_rate: 1.0e-5
+  n_steps: 2048
+  batch_size: 256
+  gamma: 0.99
+  ent_coef: 0.004
+  ent_coef_end: 0.0005
+  ent_coef_decay_timesteps: 2_000_000
+  log_std_min: -5.0
+  log_std_max: 0.0
+  net_arch: [256, 128]
+
+eval:
+  n_episodes: 100
+  every_timesteps: 100_000
+  max_episode_steps: 600
+
+checkpoint:
+  every_timesteps: 100_000
+
+stages:
+  - name: stage_turret
+    bot:
+      mode: turret
+      speed_scale: 0.0
+    reward:
+      survive_per_step: -0.01
+      path_delta_scale: 0.0
+      bullet_threat_self: -1.2
+      aim_align_scale: 0.1
+      aim_align_power: 4.0
+      aim_mode: current
+      bullet_near_enemy: 0.03
+      bullet_near_enemy_margin: 80.0
+      bullet_near_enemy_power: 4.0
+      fire_penalty: -1
+      fire_on_cd_penalty: -0.02
+      move_penalty: -0.001
+      rotate_penalty: -0.07
+      move_switch_penalty: -0.02
+      wall_proximity_scale: -0.4
+      wall_proximity_margin: 50.0
+      wall_proximity_power: 4.0
+      enemy_proximity_scale: -0.8
+      enemy_proximity_margin: 150.0
+      enemy_proximity_power: 4.0
+      kill: 60.0
+      kill_bounce: 0.0
+      death: -40.0
+      # 本局直击敌方之前，每被任意子弹击中一次
+      hit_before_direct: -80.0
+    promote:
+      metric: hit_rate
+      threshold: 1.01

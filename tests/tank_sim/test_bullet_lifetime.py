@@ -34,11 +34,11 @@ def test_bullet_expires_after_lifetime():
 
 
 def test_max_active_bullets_per_tank():
-    """每车同时最多 5 发（经典 TT）。"""
+    """每车同时最多 5 发；满弹再开火时挤掉最早己方弹（FIFO）。"""
     cfg = load_env_config(default_config_path())
     assert cfg.sim.bullet.max_active_per_tank == 5
     state = create_initial_state(cfg, "assets/maps/empty.txt")
-    # 预先放满 5 发
+    # 预先放满 5 发：age/id 递增，最早为 id=1 age=50
     for i in range(5):
         state.bullets.append(
             BulletState(
@@ -48,14 +48,19 @@ def test_max_active_bullets_per_tank():
                 vy=0.0,
                 owner="red",
                 radius=cfg.sim.bullet.radius,
-                age=0,
+                age=50 - i * 10,
+                id=i + 1,
             )
         )
+    oldest_id = 1
+    state.next_bullet_id = 100
     fire = ControlIntent(fire=True)
     idle = ControlIntent()
-    # 强制冷却为 0
     state.tanks[0].fire_cooldown = 0
-    n_before = len(state.bullets)
     state = step_world(state, fire, idle, cfg.sim)
-    assert len([b for b in state.bullets if b.owner == "red"]) <= 5
-    assert not state.red_fired or len(state.bullets) == n_before
+    red = [b for b in state.bullets if b.owner == "red"]
+    assert state.red_fired
+    assert len(red) == 5
+    assert all(b.id != oldest_id for b in red)
+    # step_bullets 后新弹 age 至少为 1；id 为发放时的 next_bullet_id
+    assert any(b.id == 100 for b in red)

@@ -24,7 +24,8 @@ class CurriculumCheckpointMeta:
     frame_stack: int
     frame_stride: int = 1
     stack_action_mean: bool = False
-    schema: int = 3
+    rotate_phase: int = 0
+    schema: int = 4
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -47,6 +48,7 @@ class CurriculumCheckpointMeta:
             frame_stack=int(raw.get("frame_stack", 16)),
             frame_stride=int(raw.get("frame_stride", 1)),
             stack_action_mean=bool(raw.get("stack_action_mean", False)),
+            rotate_phase=int(raw.get("rotate_phase", 0)),
         )
 
 
@@ -67,6 +69,7 @@ def save_curriculum_meta(checkpoint: str | Path, meta: CurriculumCheckpointMeta)
         "frame_stack": meta.frame_stack,
         "frame_stride": meta.frame_stride,
         "stack_action_mean": meta.stack_action_mean,
+        "rotate_phase": meta.rotate_phase,
         "bot": {
             "mode": meta.bot_mode,
             "speed_scale": meta.speed_scale,
@@ -159,9 +162,9 @@ def resolve_resume_target(path: str | Path) -> tuple[Path, Path]:
 
 
 def _infer_run_dir_from_checkpoint(ckpt: Path) -> Path:
-    """``.../run/checkpoints/x.zip`` 或 ``.../run/promotions/x.zip`` → ``.../run``。"""
+    """``.../run/checkpoints|promotions|named/x.zip`` → ``.../run``。"""
     parent = ckpt.parent
-    if parent.name in ("checkpoints", "promotions"):
+    if parent.name in ("checkpoints", "promotions", "named"):
         return parent.parent
     return parent
 
@@ -174,12 +177,36 @@ def apply_meta_to_scheduler(scheduler, meta: CurriculumCheckpointMeta) -> None:
         )
     scheduler.stage_index = int(meta.stage_index)
     scheduler.stage_timesteps = int(meta.stage_timesteps)
+    scheduler.rotate_phase = int(getattr(meta, "rotate_phase", 0))
     scheduler.bot.configure(
         mode=meta.bot_mode,  # type: ignore[arg-type]
         speed_scale=meta.speed_scale,
         mean_straight_frames=meta.mean_straight_frames,
         turn_duration=meta.turn_duration,
     )
+
+
+def advance_scheduler_from_promotion(
+    scheduler, checkpoint: str | Path
+) -> dict[str, Any] | None:
+    """
+    若旁路存在 ``*.promotion.json``：晋级权重的 curriculum meta 记的是刚完成阶段，
+    续训应跳到 ``next_stage`` 并从该阶段退火起点开始。
+    """
+    path = Path(checkpoint).with_name(Path(checkpoint).stem + ".promotion.json")
+    if not path.is_file():
+        return None
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    next_idx = int(payload["next_stage_index"])
+    if next_idx < 0 or next_idx >= len(scheduler.cfg.stages):
+        raise ValueError(
+            f"promotion next_stage_index={next_idx} 越界"
+            f"（共 {len(scheduler.cfg.stages)} 阶段）"
+        )
+    scheduler.stage_index = next_idx
+    scheduler.stage_timesteps = 0
+    scheduler._apply_stage_bot(scheduler.stage, progress=0.0)
+    return payload
 
 
 def build_meta_snapshot(
@@ -195,6 +222,7 @@ def build_meta_snapshot(
     turn_duration: int,
     frame_stride: int = 1,
     stack_action_mean: bool = False,
+    rotate_phase: int = 0,
 ) -> CurriculumCheckpointMeta:
     """固定快照（晋级存盘：记录刚完成阶段的对手参数）。"""
     return CurriculumCheckpointMeta(
@@ -209,6 +237,7 @@ def build_meta_snapshot(
         frame_stack=int(frame_stack),
         frame_stride=int(frame_stride),
         stack_action_mean=bool(stack_action_mean),
+        rotate_phase=int(rotate_phase),
     )
 
 
@@ -263,4 +292,5 @@ def build_meta_from_scheduler(
         frame_stack=int(frame_stack),
         frame_stride=int(frame_stride),
         stack_action_mean=bool(stack_action_mean),
+        rotate_phase=int(getattr(scheduler, "rotate_phase", 0)),
     )
