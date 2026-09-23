@@ -8,6 +8,7 @@ build/
 venv/
 .env
 runs/
+logs/
 checkpoints/
 assets/demos/
 *.zip
